@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# translator
-=======
 # 3GPP AsSessionWithQoS Translator
 
 Middleware that bridges the **OneSource NEF** (Network Exposure Function) and the **IT Aveiro Slice Manager (SM)**.
@@ -305,4 +302,3 @@ translator/
 | `422` | Pydantic validation error (malformed JSON body) |
 | `502` | SM returned an error or the network call failed after retries |
 | `503` | Circuit breaker is OPEN — SM is currently considered down |
->>>>>>> 6b1f87b (first commit)

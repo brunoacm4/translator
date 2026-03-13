@@ -1,0 +1,20 @@
+[project]
+name = "translator"
+version = "0.1.0"
+description = "Middleware API between 3GPP NEF and the Slice Manager"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.2",
+  "generated",
+  "httpx>=0.27.0",
+  "pydantic>=2.12.5",
+  "pydantic-settings>=2.0.0",
+  "uvicorn==0.13.4",
+]
+
+[tool.uv.sources]
+generated = { path = "../slice-manager/libs/messages/" }
+
+# Important: NO [build-system] here.
+# This means uv will NOT try to build translator as a package.
+# It will just manage the env + dependencies.
