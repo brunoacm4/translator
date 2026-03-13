@@ -1,15 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-
-# venv / env
 .venv/
 env/
 venv/
-
-# dotenv
+__pycache__/
 .env
-
-# IDEs
-.vscode/
-.idea/
