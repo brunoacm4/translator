@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # venv / env
 .venv/
@@ -13,3 +14,11 @@ venv/
 # IDEs
 .vscode/
 .idea/
+
+# Runtime state
+*.db
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
