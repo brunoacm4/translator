@@ -49,8 +49,8 @@ Base path: `/3gpp-as-session-with-qos/v1`
 | Method | Path | SM operations |
 |--------|------|---------------|
 | `POST`   | `/{scsAsId}/subscriptions`                  | `create_slice` + `associate_slice` |
-| `GET`    | `/{scsAsId}/subscriptions`                  | read from in-memory store |
-| `GET`    | `/{scsAsId}/subscriptions/{subscriptionId}` | read from in-memory store |
+| `GET`    | `/{scsAsId}/subscriptions`                  | read from SQLite-backed store |
+| `GET`    | `/{scsAsId}/subscriptions/{subscriptionId}` | read from SQLite-backed store |
 | `PUT`    | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` |
 | `PATCH`  | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` (only when QoS fields changed) |
 | `DELETE` | `/{scsAsId}/subscriptions/{subscriptionId}` | `delete_slice` |
@@ -164,6 +164,7 @@ cp .env.example .env
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SM_BASE_URL` | `http://localhost:8080` | Slice Manager URL |
+| `SM_DEFAULT_RAN` | unset | Optional RAN identifier included in `create_slice` payloads |
 | `SM_TIMEOUT` | `30.0` | SM call timeout (s) — Selenium takes ~10–30s |
 | `SM_HEALTH_TIMEOUT` | `5.0` | Health check timeout (s) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
@@ -181,7 +182,7 @@ cp .env.example .env
 ### Prerequisites
 
 - Python 3.10+
-- The SM mock server (bundled at `mock/sm_mock_server.py`)
+- The SM mock server (bundled at `mocks/sm_mock_server.py`)
 
 ### Setup
 
@@ -204,7 +205,7 @@ cp .env.example .env
 
 ```bash
 # Terminal 1 — SM mock (simulates the real Slice Manager)
-python -m uvicorn mock.sm_mock_server:app --port 9090
+python -m uvicorn mocks.sm_mock_server:app --port 9090
 
 # Terminal 2 — Translator
 SM_BASE_URL=http://localhost:9090 LOG_JSON=false \
@@ -252,7 +253,7 @@ translator/
 │   │       ├── common.py           3GPP types: Snssai, TscQosRequirement, …
 │   │       └── subscription.py     AsSessionWithQoSSubscription
 │   ├── store/
-│   │   └── subscription_store.py   In-memory subscription CRUD store
+│   │   └── subscription_store.py   SQLite-backed subscription CRUD store
 │   ├── config/
 │   │   ├── settings.py             Pydantic Settings (env vars / .env)
 │   │   ├── qos_profiles.py         qosReference → SM parameter mapping
@@ -265,7 +266,7 @@ translator/
 │   │   └── retry.py                Exponential backoff with full jitter
 │   └── utils/
 │       └── converters.py           mbps_to_kbps, parse_bitrate_to_kbps
-├── mock/
+├── mocks/
 │   └── sm_mock_server.py           Local SM mock for development
 ├── .env.example                    Configuration template
 └── pyproject.toml                  Dependencies
@@ -284,8 +285,8 @@ translator/
 
 5. **OpenTelemetry integration** — plug into the SM's existing OTel Collector → Jaeger / Prometheus / Grafana pipeline
 6. **Add to `docker-compose.yml`** — deploy as part of the full SM stack instead of running manually
-7. **Persistent subscription store** — replace in-memory dict with SQLite/PostgreSQL (translator restart currently loses all subscription state while SM has active slices)
-8. **Idempotency** — detect and deduplicate retransmitted NEF requests (prevents duplicate slice creation on network hiccups)
+7. **Persistent subscription store** — evaluate whether SQLite remains enough or if PostgreSQL is needed for shared/multi-instance deployment
+8. **Idempotency** — extend the current deduplication layer with operational policies for replay windows and conflict reporting
 9. **Notification callbacks** — forward `UserPlaneNotificationData` to `notificationDestination` when SM reports QoS events
 
 ---
