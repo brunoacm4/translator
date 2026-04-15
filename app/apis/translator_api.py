@@ -19,7 +19,7 @@
 
 import importlib
 import pkgutil
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -39,6 +39,8 @@ from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
+from app.models.operation import OperationAccepted
+from app.utils.idempotency import extract_idempotency_key
 
 
 router = APIRouter()
@@ -67,6 +69,7 @@ def _impl() -> BaseTranslatorApi:
     "/{scsAsId}/subscriptions",
     responses={
         201: {"description": "Subscription created successfully"},
+        202: {"description": "Duplicate request accepted (existing operation returned)"},
         400: {"description": "Bad request — invalid 3GPP payload"},
         403: {"description": "Forbidden"},
         500: {"description": "Internal server error"},
@@ -74,7 +77,7 @@ def _impl() -> BaseTranslatorApi:
     },
     tags=["AS Session with Required QoS Subscriptions"],
     summary="Create a new AS session with QoS subscription",
-    response_model=AsSessionWithQoSSubscription,
+    response_model=Union[AsSessionWithQoSSubscription, OperationAccepted],
     response_model_by_alias=True,
     response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
@@ -86,13 +89,18 @@ async def create_subscription(
     body: AsSessionWithQoSSubscription = Body(
         ..., description="AS session with QoS subscription resource"
     ),
-) -> AsSessionWithQoSSubscription:
+) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
     """
     Receives a 3GPP AsSessionWithQoSSubscription, translates it into
     Slice Manager payloads, creates + associates the slice, stores the
     subscription, and returns the full resource with a Location header.
     """
-    result = await _impl().create_subscription(scsAsId, body)
+    idem_key = extract_idempotency_key(request)
+    result = await _impl().create_subscription(scsAsId, body, idem_key)
+
+    if isinstance(result, OperationAccepted):
+        response.status_code = status.HTTP_202_ACCEPTED
+        return result
 
     # Set Location header per 3GPP spec
     sub_id = result.self_link or ""

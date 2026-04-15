@@ -23,11 +23,11 @@ from pydantic import BaseModel, Field
 
 class Snssai(BaseModel):
     """Single Network Slice Selection Assistance Information."""
-    sst: int = Field(..., ge=0, le=255, description="Slice/Service Type (0–255)")
+    sst: int = Field(..., ge=0, le=255, description="Slice/Service Type (0-255)")
     sd: Optional[str] = Field(
         default=None,
         pattern=r"^[A-Fa-f0-9]{6}$",
-        description="Slice Differentiator — 6 hex digits, e.g. '000001'",
+        description="Slice Differentiator - 6 hex digits, e.g. '000001'",
     )
 
     def to_hex(self) -> str:

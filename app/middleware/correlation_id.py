@@ -34,7 +34,6 @@ from starlette.responses import Response
 
 # ── Module-level context variable ─────────────────────────────────────
 # ContextVar survives async task switches within the same request but is
-# isolated between concurrent requests — exactly what we need.
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
 
 logger = logging.getLogger(__name__)

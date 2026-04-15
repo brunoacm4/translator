@@ -44,6 +44,92 @@ logger = logging.getLogger(__name__)
 _shared_http_client: Optional[httpx.AsyncClient] = None
 
 
+# Whitelisted outbound keys per Slice Manager endpoint.
+_ALLOWED_FIELDS_BY_PATH: Dict[str, set[str]] = {
+    "/core/slice/create": {
+        "id",
+        "administrative_state",
+        "operational_state",
+        "coverage_area",
+        "sst",
+        "sd",
+        "dnn",
+        "prioritylabel",
+        "uemobilitylevel",
+        "reliability",
+        "ulmaxpktsize",
+        "dlmaxpktsize",
+        "schedulingtype",
+        "dlrbmin",
+        "dlrbmax",
+        "ulrbmin",
+        "ulrbmax",
+        "dllatency",
+        "ullatency",
+        "delaytolerance",
+        "dldeterministiccomm",
+        "dldeterminperiodicity",
+        "uldeterministiccomm",
+        "uldeterminperiodicity",
+        "dlguathptperue",
+        "ulguathptperue",
+        "dlmaxthptperue",
+        "ulmaxthptperue",
+        "dlguathptperslice",
+        "ulguathptperslice",
+        "dlmaxthptperslice",
+        "ulmaxthptperslice",
+        "termdensity",
+        "maxnumberofpdusessions",
+        "maxnumberofues",
+        "n6protection",
+    },
+    "/core/slice/associate": {
+        "imsi",
+        "slice",
+        "numimsis",
+        "ipv4",
+        "ipv6",
+        "operational_state",
+        "amdata",
+        "default",
+        "uecansendsnssai",
+        "ambrup",
+        "ambrdw",
+        "snssai",
+    },
+    "/core/slice/change": {
+        "imsi",
+        "slice",
+        "dnn",
+        "numimsis",
+        "ipv4",
+        "ipv6",
+        "operational_state",
+        "amdata",
+        "default",
+        "uecansendsnssai",
+        "ambrup",
+        "ambrdw",
+        "snssai",
+    },
+    "/core/slice/delete": {"id"},
+}
+
+
+# Backward-compatible aliases used by current translator internals.
+_KEY_ALIASES_BY_PATH: Dict[str, Dict[str, str]] = {
+    "/core/slice/associate": {
+        "numIMSIs": "numimsis",
+        "uecanSendSNSSAI": "uecansendsnssai",
+    },
+    "/core/slice/change": {
+        "numIMSIs": "numimsis",
+        "uecanSendSNSSAI": "uecansendsnssai",
+    },
+}
+
+
 class SliceManagerClient:
     """Async HTTP client for the IT Aveiro Slice Manager."""
 
@@ -73,6 +159,44 @@ class SliceManagerClient:
 
     # -- internal helper -----------------------------------------------------
 
+    @staticmethod
+    def _sanitize_payload(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Canonicalize + whitelist payload keys for a specific SM endpoint.
+
+        - Applies known key aliases (e.g. numIMSIs -> numimsis)
+        - Drops keys not accepted by the target endpoint
+        - Drops keys whose value is None
+        """
+        allowed = _ALLOWED_FIELDS_BY_PATH.get(path)
+        aliases = _KEY_ALIASES_BY_PATH.get(path, {})
+
+        if allowed is None:
+            # Unknown endpoint: keep backward-compatible behavior, only remove nulls.
+            return {k: v for k, v in payload.items() if v is not None}
+
+        sanitized: Dict[str, Any] = {}
+        dropped: list[str] = []
+
+        for key, value in payload.items():
+            canonical_key = aliases.get(key, key)
+            if value is None:
+                dropped.append(key)
+                continue
+            if canonical_key in allowed:
+                sanitized[canonical_key] = value
+            else:
+                dropped.append(key)
+
+        if dropped:
+            logger.debug(
+                "SM payload sanitized for %s: dropped_keys=%s",
+                path,
+                sorted(set(dropped)),
+            )
+
+        return sanitized
+
     async def _post(self, path: str, payload: Dict[str, Any]) -> None:
         """
         Fire a POST request to the SM, wrapped with retry and circuit breaker.
@@ -85,11 +209,12 @@ class SliceManagerClient:
         - If retries are exhausted or SM returns 4xx/5xx: raise the exception
 
         Raises:
-            CircuitBreakerOpen    – circuit is OPEN, SM appears to be down
+            CircuitBreakerOpen    - circuit is OPEN, SM appears to be down
             httpx.TimeoutException
             httpx.ConnectError
             httpx.HTTPStatusError
         """
+        payload = self._sanitize_payload(path, payload)
         logger.info("SM POST %s  payload_keys=%s", path, list(payload.keys()))
 
         async def _attempt() -> None:

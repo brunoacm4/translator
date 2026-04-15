@@ -13,14 +13,14 @@
       PUT    subscription  →  SM change_slice
       PATCH  subscription  →  SM change_slice (partial)
       DELETE subscription  →  SM delete_slice
-      GET    subscription  →  read from in-memory store
+      GET    subscription  →  read from SQLite-backed store
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException
 
@@ -31,14 +31,17 @@ from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
-from app.models.nef.common import Snssai
+from app.models.operation import OperationAccepted
 from app.store.subscription_store import store
 
 # Config & utils
 from app.config.qos_profiles import resolve_qos_profile, QoSProfile
 from app.config.subscriber_map import resolve_imsi
 from app.config import testbed_defaults as tb
+from app.config.settings import settings
 from app.utils.converters import parse_bitrate_to_kbps
+from app.utils.idempotency import build_payload_fingerprint
+from app.store.repositories import OperationRepository, IdempotencyRepository
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,8 @@ class TranslatorService(BaseTranslatorApi):
 
     def __init__(self) -> None:
         self.sm_client = SliceManagerClient()
+        self.operation_repo = OperationRepository()
+        self.idempotency_repo = IdempotencyRepository()
 
     # ================================================================== #
     #  Internal: SM call wrapper                                          #
@@ -130,6 +135,7 @@ class TranslatorService(BaseTranslatorApi):
             "sd": sd or "",
             "dnn": dnn,
         }
+        _add_if_not_none(payload, "ran", settings.sm_default_ran)
 
         # Latency: tscQosReq.req5Gsdelay > QoS profile
         latency = None
@@ -185,8 +191,8 @@ class TranslatorService(BaseTranslatorApi):
         body: AsSessionWithQoSSubscription,
         slice_id: str,
         imsi: str,
-        snssai_hex: str,
         dnn: str,
+        snssai: str,
     ) -> Dict[str, Any]:
         """
         Build the ``CoreSliceAssociatePostRequest`` dict.
@@ -206,11 +212,8 @@ class TranslatorService(BaseTranslatorApi):
             "ambrdw": tb.DEFAULT_AMBR_DW,
             "upUnit": tb.DEFAULT_UP_UNIT,
             "dwUnit": tb.DEFAULT_DW_UNIT,
-            # Extra keys that ran_service.py reads as attributes
-            "SNSSAI": snssai_hex,
-            "DNN": dnn,
-            "DNNQOSTPLID": tb.DEFAULT_DNN_QOS_TPL_ID,
-            "DEFAULT": tb.DEFAULT_SLICE_FLAG,
+            "dnn": dnn,
+            "snssai": snssai,
         }
 
     # ================================================================== #
@@ -219,15 +222,16 @@ class TranslatorService(BaseTranslatorApi):
     def _build_change_payload(
         self,
         imsi: str,
-        snssai_hex: str,
+        slice_id: str,
+        snssai: str,
         dnn: str,
     ) -> Dict[str, Any]:
         """Build the ``CoreSliceChangePostRequest`` dict (all 4 fields required)."""
         return {
             "imsi": imsi,
-            "snssai": snssai_hex,
+            "slice": slice_id,
             "dnn": dnn,
-            "dnnqostplid": tb.DEFAULT_DNN_QOS_TPL_ID,
+            "snssai": snssai,
         }
 
     # ================================================================== #
@@ -261,18 +265,41 @@ class TranslatorService(BaseTranslatorApi):
         self,
         scs_as_id: str,
         body: AsSessionWithQoSSubscription,
-    ) -> AsSessionWithQoSSubscription:
+        idempotency_key: Optional[str] = None,
+    ) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
         """
-        Full create flow:
-          1. Resolve QoS profile from qosReference
-          2. Resolve IMSI from ueIpv4Addr / ueIpv6Addr
-          3. Determine SNSSAI (from body.snssai or QoS profile)
-          4. Generate slice_id + subscription_id
-          5. Build & send SM create_slice
-          6. Build & send SM associate_slice (rollback on failure)
-          7. Store subscription
-          8. Return AsSessionWithQoSSubscription with self link
+        Full create flow with idempotency guard:
+          1. Reserve idempotency key/fingerprint
+          2. Resolve QoS profile and IMSI
+          3. Determine SNSSAI and IDs
+          4. Send SM create + associate
+          5. Store subscription and operation status
         """
+
+        body_for_fingerprint = body.model_dump(by_alias=True, exclude_none=True)
+        payload_fingerprint = build_payload_fingerprint(scs_as_id, body_for_fingerprint)
+        operation_id = str(uuid.uuid4())
+
+        idem_result = self.idempotency_repo.reserve_or_get_existing(
+            scs_as_id=scs_as_id,
+            idempotency_key=idempotency_key,
+            payload_fingerprint=payload_fingerprint,
+            operation_id=operation_id,
+        )
+        if not idem_result["reserved"]:
+            return OperationAccepted(
+                operationId=idem_result["operation_id"],
+                status=idem_result["status"],
+                subscriptionId=idem_result.get("subscription_id"),
+            )
+
+        self.operation_repo.create(
+            operation_id=operation_id,
+            scs_as_id=scs_as_id,
+            idempotency_key=idempotency_key,
+            payload_fingerprint=payload_fingerprint,
+            status="pending",
+        )
 
         # -- 1. QoS profile -------------------------------------------------
         qos: Optional[QoSProfile] = None
@@ -280,16 +307,27 @@ class TranslatorService(BaseTranslatorApi):
             try:
                 qos = resolve_qos_profile(body.qosReference)
             except ValueError as exc:
+                self.operation_repo.update_status(
+                    operation_id=operation_id,
+                    status="failed",
+                    error=str(exc),
+                )
                 raise HTTPException(status_code=400, detail=str(exc))
 
         # -- 2. IMSI resolution ----------------------------------------------
         try:
             imsi = resolve_imsi(ue_ipv4=body.ueIpv4Addr, ue_ipv6=body.ueIpv6Addr)
         except ValueError as exc:
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="failed",
+                error=str(exc),
+            )
             raise HTTPException(status_code=400, detail=str(exc))
 
         # -- 3. SNSSAI -------------------------------------------------------
-        sst, sd, snssai_hex = self._resolve_snssai(body, qos)
+        sst, sd, _ = self._resolve_snssai(body, qos)
+        sm_snssai = f"{sst}-{sd}" if sd else str(sst)
         dnn = body.dnn or tb.DEFAULT_DNN
 
         # -- 4. IDs ----------------------------------------------------------
@@ -297,22 +335,50 @@ class TranslatorService(BaseTranslatorApi):
         subscription_id = str(uuid.uuid4())
         logger.info(
             "Creating subscription  scs=%s  sub=%s  slice=%s  imsi=%s",
-            scs_as_id, subscription_id, slice_id, imsi,
+            scs_as_id,
+            subscription_id,
+            slice_id,
+            imsi,
+        )
+
+        self.operation_repo.update_status(
+            operation_id=operation_id,
+            status="published",
+            sm_slice_id=slice_id,
         )
 
         # -- 5. SM create_slice ----------------------------------------------
         create_payload = self._build_create_payload(body, slice_id, qos, sst, sd, dnn)
         logger.info("→ SM create_slice  %s", create_payload)
-        await self._call_sm(self.sm_client.create_slice(create_payload), "SM create_slice")
+        try:
+            await self._call_sm(self.sm_client.create_slice(create_payload), "SM create_slice")
+        except HTTPException as exc:
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="failed",
+                sm_slice_id=slice_id,
+                error=str(exc.detail),
+            )
+            raise
 
         # -- 6. SM associate_slice (with rollback) ---------------------------
         associate_payload = self._build_associate_payload(
-            body, slice_id, imsi, snssai_hex, dnn,
+            body,
+            slice_id,
+            imsi,
+            dnn,
+            sm_snssai,
         )
         logger.info("→ SM associate_slice  %s", associate_payload)
         try:
             await self.sm_client.associate_slice(associate_payload)
         except CircuitBreakerOpen as exc:
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="failed",
+                sm_slice_id=slice_id,
+                error=str(exc),
+            )
             raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             logger.error("SM associate_slice failed: %s — rolling back create", exc)
@@ -321,6 +387,12 @@ class TranslatorService(BaseTranslatorApi):
                 logger.info("Rollback: deleted orphaned slice %s", slice_id)
             except Exception as rb_exc:
                 logger.error("Rollback delete_slice also failed: %s", rb_exc)
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="failed",
+                sm_slice_id=slice_id,
+                error=str(exc),
+            )
             raise HTTPException(
                 status_code=502,
                 detail=f"SM associate_slice failed (create rolled back): {exc}",
@@ -334,6 +406,14 @@ class TranslatorService(BaseTranslatorApi):
             sm_slice_id=slice_id,
             imsi=imsi,
             data=sub_data,
+            operation_id=operation_id,
+        )
+
+        self.operation_repo.update_status(
+            operation_id=operation_id,
+            status="completed",
+            subscription_id=subscription_id,
+            sm_slice_id=slice_id,
         )
 
         # -- 8. Return -------------------------------------------------------
@@ -391,11 +471,12 @@ class TranslatorService(BaseTranslatorApi):
                 raise HTTPException(status_code=400, detail=str(exc))
 
         # SNSSAI
-        _, _, snssai_hex = self._resolve_snssai(body, qos)
+        sst, sd, _ = self._resolve_snssai(body, qos)
+        sm_snssai = f"{sst}-{sd}" if sd else str(sst)
         dnn = body.dnn or tb.DEFAULT_DNN
 
         # SM change_slice
-        change_payload = self._build_change_payload(record.imsi, snssai_hex, dnn)
+        change_payload = self._build_change_payload(record.imsi, record.sm_slice_id, sm_snssai, dnn)
         logger.info("→ SM change_slice (PUT)  sub=%s  %s", subscription_id, change_payload)
         await self._call_sm(self.sm_client.change_slice(change_payload), "SM change_slice")
 
@@ -441,10 +522,11 @@ class TranslatorService(BaseTranslatorApi):
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc))
 
-            _, _, snssai_hex = self._resolve_snssai(merged_sub, qos)
+            sst, sd, _ = self._resolve_snssai(merged_sub, qos)
+            sm_snssai = f"{sst}-{sd}" if sd else str(sst)
             dnn = merged_sub.dnn or tb.DEFAULT_DNN
 
-            change_payload = self._build_change_payload(record.imsi, snssai_hex, dnn)
+            change_payload = self._build_change_payload(record.imsi, record.sm_slice_id, sm_snssai, dnn)
             logger.info("→ SM change_slice (PATCH)  sub=%s  %s", subscription_id, change_payload)
             await self._call_sm(self.sm_client.change_slice(change_payload), "SM change_slice")
 

@@ -12,12 +12,13 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Dict, List, Optional, Tuple
+from typing import ClassVar, List, Optional, Tuple, Union
 
 from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
+from app.models.operation import OperationAccepted
 
 
 class BaseTranslatorApi:
@@ -31,7 +32,8 @@ class BaseTranslatorApi:
         self,
         scs_as_id: str,
         body: AsSessionWithQoSSubscription,
-    ) -> AsSessionWithQoSSubscription:
+        idempotency_key: Optional[str] = None,
+    ) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
         """POST /{scsAsId}/subscriptions → SM create + associate."""
         ...
 

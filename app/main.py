@@ -26,6 +26,7 @@ from app.logging_config import configure_logging
 from app.middleware.correlation_id import CorrelationIdMiddleware
 from app.resilience.circuit_breaker import sm_circuit_breaker
 from app.store.subscription_store import store
+from app.db.schema import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Startup:
       - Configure logging (JSON or plain text based on LOG_JSON env var)
+      - Initialize SQLite tables
       - Log the active configuration so every deployment is traceable
 
     Shutdown:
@@ -47,14 +49,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     # Startup
     configure_logging(log_level=settings.log_level, json_logs=settings.log_json)
+    init_db()
     logger.info(
         "Translator starting  sm_base_url=%s  log_level=%s  json_logs=%s  "
-        "cb_threshold=%d  retry_attempts=%d",
+        "cb_threshold=%d  retry_attempts=%d  db_path=%s",
         settings.sm_base_url,
         settings.log_level,
         settings.log_json,
         settings.cb_failure_threshold,
         settings.retry_max_attempts,
+        settings.translator_db_path,
     )
 
     yield  # application runs here

@@ -28,8 +28,8 @@ DEFAULT_IPV4: str = "10.0.0.1"
 # IPv6 prefix assigned to the UE.
 DEFAULT_IPV6: str = "fd00::1"
 
-# AM Data (Access and Mobility) — testbed default.
-DEFAULT_AMDATA: str = "default"
+# AM Data (Access and Mobility) flag expected by the SM enum.
+DEFAULT_AMDATA: str = "true"
 
 # Whether this is the default slice for the UE.
 # SM expects StrictStr "true" / "false", NOT a Python bool.

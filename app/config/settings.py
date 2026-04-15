@@ -46,6 +46,13 @@ class Settings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for the /health SM reachability check",
     )
+    sm_default_ran: str | None = Field(
+        default=None,
+        description=(
+            "Optional default RAN identifier forwarded to the Slice Manager "
+            "create_slice payload, for example 'IT' or 'ran1'."
+        ),
+    )
 
     # ── Logging ───────────────────────────────────────────────────────
 
@@ -91,6 +98,13 @@ class Settings(BaseSettings):
     retry_max_wait: float = Field(
         default=3.0,
         description="Maximum wait time in seconds between retry attempts.",
+    )
+
+    # ── Translator state persistence ─────────────────────────────────
+
+    translator_db_path: str = Field(
+        default="./translator.db",
+        description="Path to the SQLite DB used for subscriptions and idempotency state.",
     )
 
 
