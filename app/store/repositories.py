@@ -309,3 +309,102 @@ class IdempotencyRepository:
                 "subscription_id": row["subscription_id"],
                 "sm_slice_id": row["sm_slice_id"],
             }
+
+
+class SliceRegistryRepository:
+    """
+    Tracks which SM slices exist and how many subscriptions reference each one.
+
+    Primary key: (snssai, dnn) — one SM slice per unique SNSSAI+DNN pair.
+    ``ref_count`` is incremented when a UE is associated and decremented on
+    dissociation; when it reaches 0 the slice is deleted from the SM.
+    """
+
+    def get(self, snssai: str, dnn: str) -> Optional[Dict[str, Any]]:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
+            "WHERE snssai = ? AND dnn = ?",
+            (snssai, dnn),
+        ).fetchone()
+        return self._to_dict(row)
+
+    def get_by_slice_id(self, sm_slice_id: str) -> Optional[Dict[str, Any]]:
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
+            "WHERE sm_slice_id = ?",
+            (sm_slice_id,),
+        ).fetchone()
+        return self._to_dict(row)
+
+    def get_or_create(
+        self, snssai: str, dnn: str, sm_slice_id: str
+    ) -> tuple[Dict[str, Any], bool]:
+        """
+        Atomically return an existing registry entry or insert a new one
+        with ``ref_count=0``.
+
+        Returns:
+            (entry_dict, created) where ``created`` is True when a new row
+            was inserted, False when an existing one was returned.
+        """
+        with transaction() as cur:
+            cur.execute(
+                "INSERT OR IGNORE INTO slice_registry (snssai, dnn, sm_slice_id, ref_count) "
+                "VALUES (?, ?, ?, 0)",
+                (snssai, dnn, sm_slice_id),
+            )
+            created = cur.rowcount > 0
+        row = get_connection().execute(
+            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
+            "WHERE snssai = ? AND dnn = ?",
+            (snssai, dnn),
+        ).fetchone()
+        return self._to_dict(row), created  # type: ignore[return-value]
+
+    def increment_ref(self, snssai: str, dnn: str) -> int:
+        """Increment ref_count and return the new value."""
+        with transaction() as cur:
+            cur.execute(
+                "UPDATE slice_registry SET ref_count = ref_count + 1 "
+                "WHERE snssai = ? AND dnn = ?",
+                (snssai, dnn),
+            )
+        row = get_connection().execute(
+            "SELECT ref_count FROM slice_registry WHERE snssai = ? AND dnn = ?",
+            (snssai, dnn),
+        ).fetchone()
+        return int(row["ref_count"]) if row else 0
+
+    def decrement_ref(self, snssai: str, dnn: str) -> int:
+        """Decrement ref_count (floor 0) and return the new value."""
+        with transaction() as cur:
+            cur.execute(
+                "UPDATE slice_registry SET ref_count = MAX(0, ref_count - 1) "
+                "WHERE snssai = ? AND dnn = ?",
+                (snssai, dnn),
+            )
+        row = get_connection().execute(
+            "SELECT ref_count FROM slice_registry WHERE snssai = ? AND dnn = ?",
+            (snssai, dnn),
+        ).fetchone()
+        return int(row["ref_count"]) if row else 0
+
+    def delete(self, snssai: str, dnn: str) -> None:
+        with transaction() as cur:
+            cur.execute(
+                "DELETE FROM slice_registry WHERE snssai = ? AND dnn = ?",
+                (snssai, dnn),
+            )
+
+    @staticmethod
+    def _to_dict(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        return {
+            "snssai": row["snssai"],
+            "dnn": row["dnn"],
+            "sm_slice_id": row["sm_slice_id"],
+            "ref_count": row["ref_count"],
+        }

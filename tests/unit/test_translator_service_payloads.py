@@ -5,14 +5,14 @@ from app.impl.translator_service import TranslatorService
 from app.models.nef.subscription import AsSessionWithQoSSubscription
 
 
-def test_create_payload_includes_configured_ran() -> None:
+def test_create_payload_includes_configured_coverage_area() -> None:
     service = TranslatorService()
     body = AsSessionWithQoSSubscription(
         notificationDestination="http://localhost:9999/callback",
         dnn="internet",
     )
-    old_ran = settings.sm_default_ran
-    settings.sm_default_ran = "IT"
+    old_coverage_area = settings.sm_default_coverage_area
+    settings.sm_default_coverage_area = ["IT"]
     try:
         payload = service._build_create_payload(
             body=body,
@@ -23,9 +23,9 @@ def test_create_payload_includes_configured_ran() -> None:
             dnn="internet",
         )
     finally:
-        settings.sm_default_ran = old_ran
+        settings.sm_default_coverage_area = old_coverage_area
 
-    assert payload["ran"] == "IT"
+    assert payload["coverage_area"] == ["IT"]
 
 
 def test_associate_payload_uses_canonical_lowercase_contract() -> None:

@@ -65,6 +65,17 @@ def init_db() -> None:
 
         CREATE INDEX IF NOT EXISTS ix_idempotency_operation_id
             ON idempotency_keys (operation_id);
+
+        CREATE TABLE IF NOT EXISTS slice_registry (
+            snssai TEXT NOT NULL,
+            dnn TEXT NOT NULL,
+            sm_slice_id TEXT NOT NULL,
+            ref_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (snssai, dnn)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_slice_registry_slice_id
+            ON slice_registry (sm_slice_id);
         """
     )
     conn.commit()

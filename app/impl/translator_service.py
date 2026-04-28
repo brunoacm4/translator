@@ -18,10 +18,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
+import httpx
 from fastapi import HTTPException
 
 from app.apis.translator_api_base import BaseTranslatorApi
@@ -41,7 +43,7 @@ from app.config import testbed_defaults as tb
 from app.config.settings import settings
 from app.utils.converters import parse_bitrate_to_kbps
 from app.utils.idempotency import build_payload_fingerprint
-from app.store.repositories import OperationRepository, IdempotencyRepository
+from app.store.repositories import OperationRepository, IdempotencyRepository, SliceRegistryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,15 @@ class TranslatorService(BaseTranslatorApi):
         self.sm_client = SliceManagerClient()
         self.operation_repo = OperationRepository()
         self.idempotency_repo = IdempotencyRepository()
+        self.slice_registry_repo = SliceRegistryRepository()
+        # Per-(snssai, dnn) asyncio locks to prevent concurrent slice creation races
+        self._slice_locks: Dict[tuple[str, str], asyncio.Lock] = {}
+
+    def _get_slice_lock(self, snssai: str, dnn: str) -> asyncio.Lock:
+        key = (snssai, dnn)
+        if key not in self._slice_locks:
+            self._slice_locks[key] = asyncio.Lock()
+        return self._slice_locks[key]
 
     # ================================================================== #
     #  Internal: SM call wrapper                                          #
@@ -79,6 +90,25 @@ class TranslatorService(BaseTranslatorApi):
             raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"{description} failed: {exc}")
+
+    # ================================================================== #
+    #  Internal: deterministic slice ID derivation                        #
+    # ================================================================== #
+
+    @staticmethod
+    def _derive_slice_id(sst: int, sd: Optional[str], dnn: str) -> str:
+        """
+        Derive a stable, human-readable SM slice ID from SNSSAI + DNN.
+
+        Format: ``s{sst}d{sd}-{dnn}``  e.g. ``s1d000001-internet``
+
+        The SM uses this as ``slice_name`` / ``tplname`` in hardware, so it
+        must be consistent across calls for the same logical slice.
+        Allowed chars: alphanumeric, hyphen, underscore.
+        """
+        safe_sd = sd or "000000"
+        safe_dnn = dnn.replace(".", "-").replace("_", "-")
+        return f"s{sst}d{safe_sd}-{safe_dnn}"
 
     # ================================================================== #
     #  Internal: resolve SNSSAI (from body snssai or QoS profile)         #
@@ -132,10 +162,11 @@ class TranslatorService(BaseTranslatorApi):
         payload: Dict[str, Any] = {
             "id": slice_id,
             "sst": sst,
-            "sd": sd or "",
             "dnn": dnn,
         }
-        _add_if_not_none(payload, "ran", settings.sm_default_ran)
+        if sd:
+            payload["sd"] = sd
+        _add_if_not_none(payload, "coverage_area", settings.sm_default_coverage_area)
 
         # Latency: tscQosReq.req5Gsdelay > QoS profile
         latency = None
@@ -186,6 +217,22 @@ class TranslatorService(BaseTranslatorApi):
     # ================================================================== #
     #  Internal: build SM associate_slice payload                         #
     # ================================================================== #
+    # ================================================================== #
+    #  Internal: build SM dissociate_slice payload                        #
+    # ================================================================== #
+    @staticmethod
+    def _build_dissociate_payload(
+        imsi: str,
+        slice_id: str,
+        snssai: str,
+    ) -> Dict[str, Any]:
+        """Build the ``CoreSliceDissociatePostRequest`` dict."""
+        return {
+            "imsi": imsi,
+            "slice": slice_id,
+            "snssai": snssai,
+        }
+
     def _build_associate_payload(
         self,
         body: AsSessionWithQoSSubscription,
@@ -330,73 +377,127 @@ class TranslatorService(BaseTranslatorApi):
         sm_snssai = f"{sst}-{sd}" if sd else str(sst)
         dnn = body.dnn or tb.DEFAULT_DNN
 
-        # -- 4. IDs ----------------------------------------------------------
-        slice_id = str(uuid.uuid4())
+        # -- 4. Slice ID (deterministic) + Registry --------------------------
+        slice_id = self._derive_slice_id(sst, sd, dnn)
         subscription_id = str(uuid.uuid4())
-        logger.info(
-            "Creating subscription  scs=%s  sub=%s  slice=%s  imsi=%s",
-            scs_as_id,
-            subscription_id,
-            slice_id,
-            imsi,
-        )
 
-        self.operation_repo.update_status(
-            operation_id=operation_id,
-            status="published",
-            sm_slice_id=slice_id,
-        )
+        async with self._get_slice_lock(sm_snssai, dnn):
+            registry_entry, is_new_slice = self.slice_registry_repo.get_or_create(
+                snssai=sm_snssai,
+                dnn=dnn,
+                sm_slice_id=slice_id,
+            )
+            if not is_new_slice:
+                # Reuse the already-provisioned slice
+                slice_id = registry_entry["sm_slice_id"]
 
-        # -- 5. SM create_slice ----------------------------------------------
-        create_payload = self._build_create_payload(body, slice_id, qos, sst, sd, dnn)
-        logger.info("→ SM create_slice  %s", create_payload)
-        try:
-            await self._call_sm(self.sm_client.create_slice(create_payload), "SM create_slice")
-        except HTTPException as exc:
+            logger.info(
+                "Creating subscription  scs=%s  sub=%s  slice=%s  imsi=%s  new_slice=%s",
+                scs_as_id,
+                subscription_id,
+                slice_id,
+                imsi,
+                is_new_slice,
+            )
+
             self.operation_repo.update_status(
                 operation_id=operation_id,
-                status="failed",
+                status="published",
                 sm_slice_id=slice_id,
-                error=str(exc.detail),
             )
-            raise
 
-        # -- 6. SM associate_slice (with rollback) ---------------------------
-        associate_payload = self._build_associate_payload(
-            body,
-            slice_id,
-            imsi,
-            dnn,
-            sm_snssai,
-        )
-        logger.info("→ SM associate_slice  %s", associate_payload)
-        try:
-            await self.sm_client.associate_slice(associate_payload)
-        except CircuitBreakerOpen as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id,
-                status="failed",
-                sm_slice_id=slice_id,
-                error=str(exc),
+            # -- 5. SM create_slice (only when slice is brand-new) -----------
+            if is_new_slice:
+                create_payload = self._build_create_payload(body, slice_id, qos, sst, sd, dnn)
+                logger.info("→ SM create_slice  %s", create_payload)
+                try:
+                    await self.sm_client.create_slice(create_payload)
+                except CircuitBreakerOpen as exc:
+                    self.slice_registry_repo.delete(sm_snssai, dnn)
+                    self.operation_repo.update_status(
+                        operation_id=operation_id, status="failed",
+                        sm_slice_id=slice_id, error=str(exc),
+                    )
+                    raise HTTPException(status_code=503, detail=str(exc))
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 409:
+                        # Slice already exists in SM (e.g. translator DB was reset).
+                        # Treat it as a pre-existing slice — skip rollback and proceed
+                        # with associate.
+                        logger.info(
+                            "Slice %s already exists in SM (409) — reusing", slice_id
+                        )
+                        is_new_slice = False
+                    else:
+                        self.slice_registry_repo.delete(sm_snssai, dnn)
+                        self.operation_repo.update_status(
+                            operation_id=operation_id, status="failed",
+                            sm_slice_id=slice_id, error=str(exc),
+                        )
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"SM create_slice failed: {exc}",
+                        )
+                except Exception as exc:
+                    self.slice_registry_repo.delete(sm_snssai, dnn)
+                    self.operation_repo.update_status(
+                        operation_id=operation_id, status="failed",
+                        sm_slice_id=slice_id, error=str(exc),
+                    )
+                    raise HTTPException(
+                        status_code=502, detail=f"SM create_slice failed: {exc}"
+                    )
+
+            # -- 6. SM associate_slice (with rollback) -----------------------
+            associate_payload = self._build_associate_payload(
+                body,
+                slice_id,
+                imsi,
+                dnn,
+                sm_snssai,
             )
-            raise HTTPException(status_code=503, detail=str(exc))
-        except Exception as exc:
-            logger.error("SM associate_slice failed: %s — rolling back create", exc)
+            logger.info("→ SM associate_slice  %s", associate_payload)
             try:
-                await self.sm_client.delete_slice({"id": slice_id})
-                logger.info("Rollback: deleted orphaned slice %s", slice_id)
-            except Exception as rb_exc:
-                logger.error("Rollback delete_slice also failed: %s", rb_exc)
-            self.operation_repo.update_status(
-                operation_id=operation_id,
-                status="failed",
-                sm_slice_id=slice_id,
-                error=str(exc),
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"SM associate_slice failed (create rolled back): {exc}",
-            )
+                await self.sm_client.associate_slice(associate_payload)
+            except CircuitBreakerOpen as exc:
+                if is_new_slice:
+                    try:
+                        await self.sm_client.delete_slice({"id": slice_id})
+                    except Exception:
+                        pass
+                    self.slice_registry_repo.delete(sm_snssai, dnn)
+                self.operation_repo.update_status(
+                    operation_id=operation_id,
+                    status="failed",
+                    sm_slice_id=slice_id,
+                    error=str(exc),
+                )
+                raise HTTPException(status_code=503, detail=str(exc))
+            except Exception as exc:
+                logger.error("SM associate_slice failed: %s", exc)
+                if is_new_slice:
+                    try:
+                        await self.sm_client.delete_slice({"id": slice_id})
+                        logger.info("Rollback: deleted orphaned slice %s", slice_id)
+                    except Exception as rb_exc:
+                        logger.error("Rollback delete_slice also failed: %s", rb_exc)
+                    self.slice_registry_repo.delete(sm_snssai, dnn)
+                self.operation_repo.update_status(
+                    operation_id=operation_id,
+                    status="failed",
+                    sm_slice_id=slice_id,
+                    error=str(exc),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"SM associate_slice failed"
+                        f"{' (create rolled back)' if is_new_slice else ''}: {exc}"
+                    ),
+                )
+
+            # Associate succeeded — increment ref count
+            self.slice_registry_repo.increment_ref(sm_snssai, dnn)
 
         # -- 7. Store subscription -------------------------------------------
         sub_data = self._sub_to_dict(body, scs_as_id, subscription_id)
@@ -544,15 +645,54 @@ class TranslatorService(BaseTranslatorApi):
         scs_as_id: str,
         subscription_id: str,
     ) -> None:
-        """Delete the subscription and the corresponding SM slice."""
+        """Dissociate the UE, decrement the slice ref count, and delete the
+        slice from SM only when the last subscriber is removed."""
         record = store.get(scs_as_id, subscription_id)
         if not record:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        # SM delete_slice
-        delete_payload = {"id": record.sm_slice_id}
-        logger.info("→ SM delete_slice  sub=%s  slice=%s", subscription_id, record.sm_slice_id)
-        await self._call_sm(self.sm_client.delete_slice(delete_payload), "SM delete_slice")
+        slice_id = record.sm_slice_id
+        imsi = record.imsi
 
-        # Remove from store
+        registry_entry = self.slice_registry_repo.get_by_slice_id(slice_id)
+
+        if registry_entry is not None:
+            sm_snssai = registry_entry["snssai"]
+            dnn = registry_entry["dnn"]
+
+            async with self._get_slice_lock(sm_snssai, dnn):
+                # Dissociate UE from the slice
+                dissociate_payload = self._build_dissociate_payload(imsi, slice_id, sm_snssai)
+                logger.info(
+                    "→ SM dissociate_slice  sub=%s  slice=%s  imsi=%s",
+                    subscription_id, slice_id, imsi,
+                )
+                try:
+                    await self._call_sm(
+                        self.sm_client.dissociate_slice(dissociate_payload),
+                        "SM dissociate_slice",
+                    )
+                except HTTPException as exc:
+                    logger.warning(
+                        "SM dissociate_slice failed (continuing): %s", exc.detail
+                    )
+
+                new_ref_count = self.slice_registry_repo.decrement_ref(sm_snssai, dnn)
+                logger.info("Slice %s ref_count now %d", slice_id, new_ref_count)
+
+                if new_ref_count == 0:
+                    logger.info("→ SM delete_slice  slice=%s", slice_id)
+                    await self._call_sm(
+                        self.sm_client.delete_slice({"id": slice_id}), "SM delete_slice"
+                    )
+                    self.slice_registry_repo.delete(sm_snssai, dnn)
+        else:
+            # Legacy subscription without a registry entry — delete directly
+            logger.warning(
+                "No registry entry for slice %s — falling back to direct delete", slice_id
+            )
+            await self._call_sm(
+                self.sm_client.delete_slice({"id": slice_id}), "SM delete_slice"
+            )
+
         store.delete(scs_as_id, subscription_id)

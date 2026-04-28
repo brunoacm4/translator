@@ -15,6 +15,11 @@ venv/
 .vscode/
 .idea/
 
+# Build / packaging artifacts
+*.egg-info/
+dist/
+build/
+
 # Runtime state
 *.db
 *.db-shm

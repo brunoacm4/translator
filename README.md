@@ -48,12 +48,12 @@ Base path: `/3gpp-as-session-with-qos/v1`
 
 | Method | Path | SM operations |
 |--------|------|---------------|
-| `POST`   | `/{scsAsId}/subscriptions`                  | `create_slice` + `associate_slice` |
+| `POST`   | `/{scsAsId}/subscriptions`                  | `create_slice` (if new SNSSAI+DNN) + `associate_slice` |
 | `GET`    | `/{scsAsId}/subscriptions`                  | read from SQLite-backed store |
 | `GET`    | `/{scsAsId}/subscriptions/{subscriptionId}` | read from SQLite-backed store |
 | `PUT`    | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` |
 | `PATCH`  | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` (only when QoS fields changed) |
-| `DELETE` | `/{scsAsId}/subscriptions/{subscriptionId}` | `delete_slice` |
+| `DELETE` | `/{scsAsId}/subscriptions/{subscriptionId}` | `dissociate_slice` + `delete_slice` (only when ref_count=0) |
 
 Additional:
 | Method | Path | Description |
@@ -103,7 +103,20 @@ IPV4_TO_IMSI = {
 
 The 3GPP `tscQosReq` uses human-readable strings like `"10 Mbps"`. The SM expects integer KBPS. `parse_bitrate_to_kbps()` handles: `bps`, `Kbps`, `Mbps`, `Gbps`, `Tbps`.
 
-### 5. Create + Associate Rollback
+### 5. Slice Registry & Deduplication
+
+The translator maintains a **slice registry** table (`snssai`, `dnn`, `sm_slice_id`, `ref_count`) to ensure that multiple NEF subscriptions sharing the same SNSSAI+DNN pair reuse a single SM slice instead of creating duplicates.
+
+```
+POST (UE-A, qos_ref_1)  →  create_slice + associate_slice  →  ref_count=1
+POST (UE-B, qos_ref_1)  →  associate_slice only            →  ref_count=2
+DELETE (UE-B)           →  dissociate_slice                →  ref_count=1  (slice kept)
+DELETE (UE-A)           →  dissociate_slice + delete_slice →  ref_count=0  (slice removed)
+```
+
+Slice IDs are **deterministic**: `s{sst}d{sd}-{dnn}` (e.g. `s1d000001-internet`), so the SM always receives the same ID for the same slice parameters regardless of which subscription created it first.
+
+### 6. Create + Associate Rollback
 
 Creating a slice is a two-step SM operation:
 
@@ -164,7 +177,7 @@ cp .env.example .env
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SM_BASE_URL` | `http://localhost:8080` | Slice Manager URL |
-| `SM_DEFAULT_RAN` | unset | Optional RAN identifier included in `create_slice` payloads |
+| `SM_DEFAULT_COVERAGE_AREA` | unset | JSON array of coverage area strings included in `create_slice` (e.g. `["IT"]`) |
 | `SM_TIMEOUT` | `30.0` | SM call timeout (s) — Selenium takes ~10–30s |
 | `SM_HEALTH_TIMEOUT` | `5.0` | Health check timeout (s) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
@@ -252,8 +265,13 @@ translator/
 │   │   └── nef/
 │   │       ├── common.py           3GPP types: Snssai, TscQosRequirement, …
 │   │       └── subscription.py     AsSessionWithQoSSubscription
+│   ├── db/
+│   │   ├── connection.py            SQLite connection + WAL mode setup
+│   │   └── schema.py               Table/index DDL (CREATE IF NOT EXISTS)
 │   ├── store/
-│   │   └── subscription_store.py   SQLite-backed subscription CRUD store
+│   │   ├── subscription_store.py   High-level subscription CRUD (uses repositories)
+│   │   └── repositories.py         Low-level DAOs: Subscription, Operation,
+│   │                               Idempotency, SliceRegistry
 │   ├── config/
 │   │   ├── settings.py             Pydantic Settings (env vars / .env)
 │   │   ├── qos_profiles.py         qosReference → SM parameter mapping
@@ -286,7 +304,7 @@ translator/
 5. **OpenTelemetry integration** — plug into the SM's existing OTel Collector → Jaeger / Prometheus / Grafana pipeline
 6. **Add to `docker-compose.yml`** — deploy as part of the full SM stack instead of running manually
 7. **Persistent subscription store** — evaluate whether SQLite remains enough or if PostgreSQL is needed for shared/multi-instance deployment
-8. **Idempotency** — extend the current deduplication layer with operational policies for replay windows and conflict reporting
+8. **Idempotency replay window** — add configurable TTL to idempotency keys so stale entries are purged automatically
 9. **Notification callbacks** — forward `UserPlaneNotificationData` to `notificationDestination` when SM reports QoS events
 
 ---

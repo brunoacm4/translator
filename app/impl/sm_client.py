@@ -114,6 +114,13 @@ _ALLOWED_FIELDS_BY_PATH: Dict[str, set[str]] = {
         "snssai",
     },
     "/core/slice/delete": {"id"},
+    "/core/slice/dissociate": {
+        "imsi",
+        "slice",
+        "snssai",
+        "amdata",
+        "operational_state",
+    },
 }
 
 
@@ -295,3 +302,14 @@ class SliceManagerClient:
             payload: Dict matching CoreSliceDeletePostRequest fields.
         """
         await self._post("/core/slice/delete", payload)
+
+    async def dissociate_slice(self, payload: Dict[str, Any]) -> None:
+        """
+        POST /core/slice/dissociate
+
+        Dissociates a UE (IMSI) from an existing slice.
+
+        Args:
+            payload: Dict matching CoreSliceDissociatePostRequest fields.
+        """
+        await self._post("/core/slice/dissociate", payload)

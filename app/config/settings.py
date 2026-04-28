@@ -53,6 +53,14 @@ class Settings(BaseSettings):
             "create_slice payload, for example 'IT' or 'ran1'."
         ),
     )
+    sm_default_coverage_area: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional list of coverage area identifiers forwarded to the Slice "
+            "Manager create_slice payload. The core_worker uses this to resolve "
+            "which RAN to configure, e.g. [\"IT\"]."
+        ),
+    )
 
     # ── Logging ───────────────────────────────────────────────────────
 
