@@ -22,20 +22,20 @@ from typing import Dict
 
 IPV4_TO_IMSI: Dict[str, str] = {
     # TODO: Populate with real testbed UE IPs → IMSIs
-    "10.0.0.1": "268019012345678",
-    "10.0.0.2": "268019012345679",
+    "10.0.0.1": "999080100001151",
+    "10.0.0.2": "999080100001152",
 }
 
 IPV6_TO_IMSI: Dict[str, str] = {
     # TODO: Populate with real testbed UE IPv6 → IMSIs
-    "fd00::1": "268019012345678",
-    "fd00::2": "268019012345679",
+    "fd00::1": "999080100001151",
+    "fd00::2": "999080100001152",
 }
 
 # Legacy MSISDN map kept for backward compatibility / future use
 MSISDN_TO_IMSI: Dict[str, str] = {
-    "msisdn-351912345678": "268019012345678",
-    "msisdn-351912345679": "268019012345679",
+    "msisdn-351912345678": "999080100001151",
+    "msisdn-351912345679": "999080100001152",
 }
 
 

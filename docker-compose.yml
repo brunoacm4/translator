@@ -1,0 +1,28 @@
+services:
+  nef-translator:
+    build:
+      context: ..
+      dockerfile: translator-develop/Dockerfile
+    image: nef-translator:v0.1.0
+    container_name: nef-translator
+    restart: on-failure
+    ports:
+      - "8081:8081"
+    environment:
+      SM_BASE_URL: http://10.16.255.50:8080
+      SM_DEFAULT_COVERAGE_AREA: '["IT"]'
+      SM_TIMEOUT: "30.0"
+      SM_HEALTH_TIMEOUT: "5.0"
+      LOG_LEVEL: INFO
+      LOG_JSON: "true"
+      CB_FAILURE_THRESHOLD: "5"
+      CB_RECOVERY_TIMEOUT: "30.0"
+      RETRY_MAX_ATTEMPTS: "2"
+      RETRY_MIN_WAIT: "0.5"
+      RETRY_MAX_WAIT: "3.0"
+      TRANSLATOR_DB_PATH: /data/translator.db
+    volumes:
+      - translator-data:/data
+
+volumes:
+  translator-data:
