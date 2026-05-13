@@ -11,8 +11,8 @@ WORKDIR /app
 COPY slice-manager/libs/messages /app/libs/messages
 
 # Copy translator source
-COPY translator-develop/pyproject.toml .
-COPY translator-develop/app ./app
+COPY translator/pyproject.toml .
+COPY translator/app ./app
 
 # Install the libs dependency then the translator
 RUN pip install --no-cache-dir /app/libs/messages && \
@@ -22,6 +22,8 @@ RUN pip install --no-cache-dir /app/libs/messages && \
         "pydantic>=2.12.5" \
         "pydantic-settings>=2.0.0" \
         uvicorn==0.13.4
+
+RUN mkdir -p /data && chown 10001:10001 /data
 
 USER nonroot
 

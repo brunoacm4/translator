@@ -2,14 +2,14 @@ services:
   nef-translator:
     build:
       context: ..
-      dockerfile: translator-develop/Dockerfile
+      dockerfile: translator/Dockerfile
     image: nef-translator:v0.1.0
     container_name: nef-translator
     restart: on-failure
     ports:
       - "8081:8081"
     environment:
-      SM_BASE_URL: http://10.16.255.50:8080
+      SM_BASE_URL: http://10.16.255.55:8080
       SM_DEFAULT_COVERAGE_AREA: '["IT"]'
       SM_TIMEOUT: "30.0"
       SM_HEALTH_TIMEOUT: "5.0"
