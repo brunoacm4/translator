@@ -38,15 +38,15 @@ def test_put_calls_change_slice_with_sm_required_fields(sqlite_db, monkeypatch) 
 
     async def _create(self, payload):
         calls["create_payload"] = payload
-        return None
+        return ""
 
-    async def _associate(self, payload):
+    async def _associate(self, ue_id, payload):
         calls["associate_payload"] = payload
-        return None
+        return ""
 
-    async def _change(self, payload):
+    async def _change(self, ue_id, payload):
         calls["change_payload"] = payload
-        return None
+        return ""
 
     monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
     monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
@@ -73,8 +73,7 @@ def test_put_calls_change_slice_with_sm_required_fields(sqlite_db, monkeypatch) 
     assert calls["change_payload"] is not None
 
     change_payload = calls["change_payload"]
-    assert change_payload["imsi"] == "268019012345679"
-    assert change_payload["slice"] == calls["create_payload"]["id"]
+    assert change_payload["slice_id"] == calls["create_payload"]["slice_id"]
     assert change_payload["dnn"] == "internet"
     assert change_payload["snssai"] == "1-000001"
 
@@ -85,14 +84,14 @@ def test_patch_without_qos_fields_does_not_call_change_slice(sqlite_db, monkeypa
     calls = {"change": 0}
 
     async def _create(self, payload):
-        return None
+        return ""
 
-    async def _associate(self, payload):
-        return None
+    async def _associate(self, ue_id, payload):
+        return ""
 
-    async def _change(self, payload):
+    async def _change(self, ue_id, payload):
         calls["change"] += 1
-        return None
+        return ""
 
     monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
     monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
@@ -117,14 +116,14 @@ def test_patch_with_qos_reference_calls_change_slice(sqlite_db, monkeypatch) -> 
     calls = {"change_payload": None}
 
     async def _create(self, payload):
-        return None
+        return ""
 
-    async def _associate(self, payload):
-        return None
+    async def _associate(self, ue_id, payload):
+        return ""
 
-    async def _change(self, payload):
+    async def _change(self, ue_id, payload):
         calls["change_payload"] = payload
-        return None
+        return ""
 
     monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
     monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
@@ -141,4 +140,4 @@ def test_patch_with_qos_reference_calls_change_slice(sqlite_db, monkeypatch) -> 
 
     assert response.status_code == 200
     assert calls["change_payload"] is not None
-    assert set(calls["change_payload"].keys()) == {"imsi", "slice", "dnn", "snssai"}
+    assert set(calls["change_payload"].keys()) == {"slice_id", "dnn", "snssai"}

@@ -21,13 +21,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Awaitable, Dict, List, Optional, Union
 
 import httpx
 from fastapi import HTTPException
 
 from app.apis.translator_api_base import BaseTranslatorApi
 from app.impl.sm_client import SliceManagerClient
+from app.impl.sm_poller import poll_sm_request
 from app.resilience.circuit_breaker import CircuitBreakerOpen
 from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
@@ -78,14 +79,13 @@ class TranslatorService(BaseTranslatorApi):
     # ================================================================== #
 
     @staticmethod
-    async def _call_sm(coro, description: str) -> None:
+    async def _call_sm(coro: Awaitable[str], description: str) -> str:
         """
-        Await an SM coroutine, translating exceptions to HTTP status codes:
-          - CircuitBreakerOpen → 503 (SM is down, try later)
-          - Any other error    → 502 (SM returned/caused an error)
+        Await an SM coroutine, translating exceptions to HTTP status codes.
+        Returns the SM ``request_id`` string on success.
         """
         try:
-            await coro
+            return await coro
         except CircuitBreakerOpen as exc:
             raise HTTPException(status_code=503, detail=str(exc))
         except Exception as exc:
@@ -160,7 +160,7 @@ class TranslatorService(BaseTranslatorApi):
           3. Forward-if-present for all other SM fields
         """
         payload: Dict[str, Any] = {
-            "id": slice_id,
+            "slice_id": slice_id,
             "sst": sst,
             "dnn": dnn,
         }
@@ -175,8 +175,8 @@ class TranslatorService(BaseTranslatorApi):
         elif qos:
             latency = qos.latency_ms
         if latency is not None:
-            payload["dllatency"] = latency
-            payload["ullatency"] = latency
+            payload["downlink_latency_ms"] = latency
+            payload["uplink_latency_ms"] = latency
 
         # Priority: tscQosReq.priority > QoS profile
         priority = None
@@ -184,7 +184,7 @@ class TranslatorService(BaseTranslatorApi):
             priority = body.tscQosReq.priority
         elif qos:
             priority = qos.prioritylabel
-        _add_if_not_none(payload, "prioritylabel", priority)
+        _add_if_not_none(payload, "priority_label", priority)
 
         # Reliability: from QoS profile (no 3GPP equivalent in tscQosReq)
         if qos:
@@ -192,75 +192,51 @@ class TranslatorService(BaseTranslatorApi):
 
         # Delay tolerance, deterministic comm, mobility: from QoS profile
         if qos:
-            payload["delaytolerance"] = qos.delaytolerance
-            payload["dldeterministiccomm"] = qos.dldeterministiccomm
-            payload["uldeterministiccomm"] = qos.uldeterministiccomm
-            payload["uemobilitylevel"] = qos.uemobilitylevel
+            payload["delay_tolerance"] = qos.delaytolerance
+            payload["downlink_deterministic_communication"] = qos.dldeterministiccomm
+            payload["uplink_deterministic_communication"] = qos.uldeterministiccomm
+            payload["ue_mobility_level"] = qos.uemobilitylevel
 
         # Throughput from tscQosReq BitRate strings
         if body.tscQosReq:
             if body.tscQosReq.reqGbrDl:
                 kbps = parse_bitrate_to_kbps(body.tscQosReq.reqGbrDl)
-                _add_if_not_none(payload, "dlguathptperue", kbps)
+                _add_if_not_none(payload, "downlink_guaranteed_bitrate_per_ue_kbps", kbps)
             if body.tscQosReq.reqGbrUl:
                 kbps = parse_bitrate_to_kbps(body.tscQosReq.reqGbrUl)
-                _add_if_not_none(payload, "ulguathptperue", kbps)
+                _add_if_not_none(payload, "uplink_guaranteed_bitrate_per_ue_kbps", kbps)
             if body.tscQosReq.reqMbrDl:
                 kbps = parse_bitrate_to_kbps(body.tscQosReq.reqMbrDl)
-                _add_if_not_none(payload, "dlmaxthptperue", kbps)
+                _add_if_not_none(payload, "downlink_maximum_bitrate_per_ue_kbps", kbps)
             if body.tscQosReq.reqMbrUl:
                 kbps = parse_bitrate_to_kbps(body.tscQosReq.reqMbrUl)
-                _add_if_not_none(payload, "ulmaxthptperue", kbps)
+                _add_if_not_none(payload, "uplink_maximum_bitrate_per_ue_kbps", kbps)
 
         return payload
 
     # ================================================================== #
     #  Internal: build SM associate_slice payload                         #
     # ================================================================== #
-    # ================================================================== #
-    #  Internal: build SM dissociate_slice payload                        #
-    # ================================================================== #
-    @staticmethod
-    def _build_dissociate_payload(
-        imsi: str,
-        slice_id: str,
-        snssai: str,
-    ) -> Dict[str, Any]:
-        """Build the ``CoreSliceDissociatePostRequest`` dict."""
-        return {
-            "imsi": imsi,
-            "slice": slice_id,
-            "snssai": snssai,
-        }
 
     def _build_associate_payload(
         self,
         body: AsSessionWithQoSSubscription,
         slice_id: str,
-        imsi: str,
-        dnn: str,
         snssai: str,
     ) -> Dict[str, Any]:
         """
-        Build the ``CoreSliceAssociatePostRequest`` dict.
-
-        Uses testbed defaults for required fields the NEF doesn't provide.
+        Build the ``UeSliceAssociationCreateRequest`` dict.
+        IMSI is passed separately as ``ue_id`` path parameter.
         """
         return {
-            "imsi": imsi,
-            "slice": slice_id,
-            "numIMSIs": tb.NUM_IMSIS,
-            "ipv4": body.ueIpv4Addr or tb.DEFAULT_IPV4,
-            "ipv6": body.ueIpv6Addr or tb.DEFAULT_IPV6,
-            "amdata": tb.DEFAULT_AMDATA,
-            "default": tb.DEFAULT_SLICE_FLAG,
-            "uecanSendSNSSAI": tb.UE_CAN_SEND_SNSSAI,
-            "ambrup": tb.DEFAULT_AMBR_UP,
-            "ambrdw": tb.DEFAULT_AMBR_DW,
-            "upUnit": tb.DEFAULT_UP_UNIT,
-            "dwUnit": tb.DEFAULT_DW_UNIT,
-            "dnn": dnn,
+            "slice_id": slice_id,
             "snssai": snssai,
+            "static_ipv4_address": body.ueIpv4Addr or tb.DEFAULT_IPV4,
+            "access_mobility_data": True,
+            "default_association": True,
+            "snssai_advertisement_allowed": True,
+            "uplink_aggregate_maximum_bitrate_kbps": tb.DEFAULT_AMBR_UP,
+            "downlink_aggregate_maximum_bitrate_kbps": tb.DEFAULT_AMBR_DW,
         }
 
     # ================================================================== #
@@ -268,17 +244,17 @@ class TranslatorService(BaseTranslatorApi):
     # ================================================================== #
     def _build_change_payload(
         self,
-        imsi: str,
         slice_id: str,
         snssai: str,
         dnn: str,
     ) -> Dict[str, Any]:
-        """Build the ``CoreSliceChangePostRequest`` dict (all 4 fields required)."""
+        """Build the ``UeSliceAssociationUpdateRequest`` dict.
+        IMSI is passed separately as ``ue_id`` path parameter.
+        """
         return {
-            "imsi": imsi,
-            "slice": slice_id,
-            "dnn": dnn,
+            "slice_id": slice_id,
             "snssai": snssai,
+            "dnn": dnn,
         }
 
     # ================================================================== #
@@ -407,11 +383,12 @@ class TranslatorService(BaseTranslatorApi):
             )
 
             # -- 5. SM create_slice (only when slice is brand-new) -----------
+            sm_req_id: str = ""
             if is_new_slice:
                 create_payload = self._build_create_payload(body, slice_id, qos, sst, sd, dnn)
-                logger.info("→ SM create_slice  %s", create_payload)
+                logger.info("→ SM create_slice  slice=%s", slice_id)
                 try:
-                    await self.sm_client.create_slice(create_payload)
+                    sm_req_id = await self.sm_client.create_slice(create_payload)
                 except CircuitBreakerOpen as exc:
                     self.slice_registry_repo.delete(sm_snssai, dnn)
                     self.operation_repo.update_status(
@@ -452,17 +429,15 @@ class TranslatorService(BaseTranslatorApi):
             associate_payload = self._build_associate_payload(
                 body,
                 slice_id,
-                imsi,
-                dnn,
                 sm_snssai,
             )
-            logger.info("→ SM associate_slice  %s", associate_payload)
+            logger.info("→ SM associate_slice  imsi=%s  slice=%s", imsi, slice_id)
             try:
-                await self.sm_client.associate_slice(associate_payload)
+                sm_req_id = await self.sm_client.associate_slice(imsi, associate_payload)
             except CircuitBreakerOpen as exc:
                 if is_new_slice:
                     try:
-                        await self.sm_client.delete_slice({"id": slice_id})
+                        await self.sm_client.delete_slice(slice_id)
                     except Exception:
                         pass
                     self.slice_registry_repo.delete(sm_snssai, dnn)
@@ -477,7 +452,7 @@ class TranslatorService(BaseTranslatorApi):
                 logger.error("SM associate_slice failed: %s", exc)
                 if is_new_slice:
                     try:
-                        await self.sm_client.delete_slice({"id": slice_id})
+                        await self.sm_client.delete_slice(slice_id)
                         logger.info("Rollback: deleted orphaned slice %s", slice_id)
                     except Exception as rb_exc:
                         logger.error("Rollback delete_slice also failed: %s", rb_exc)
@@ -510,12 +485,29 @@ class TranslatorService(BaseTranslatorApi):
             operation_id=operation_id,
         )
 
+        notification_url: Optional[str] = (
+            str(body.notificationDestination) if body.notificationDestination else None
+        )
         self.operation_repo.update_status(
             operation_id=operation_id,
-            status="completed",
+            status="sm_provisioning",
             subscription_id=subscription_id,
             sm_slice_id=slice_id,
+            sm_request_id=sm_req_id or None,
+            notification_url=notification_url,
         )
+
+        # Launch background polling task — tracks SM completion and sends callback
+        if sm_req_id:
+            asyncio.create_task(
+                poll_sm_request(
+                    sm_request_id=sm_req_id,
+                    operation_id=operation_id,
+                    notification_url=notification_url,
+                    subscription_id=subscription_id,
+                ),
+                name=f"poll-{sm_req_id[:8]}",
+            )
 
         # -- 8. Return -------------------------------------------------------
         return AsSessionWithQoSSubscription.model_validate(sub_data)
@@ -577,9 +569,16 @@ class TranslatorService(BaseTranslatorApi):
         dnn = body.dnn or tb.DEFAULT_DNN
 
         # SM change_slice
-        change_payload = self._build_change_payload(record.imsi, record.sm_slice_id, sm_snssai, dnn)
-        logger.info("→ SM change_slice (PUT)  sub=%s  %s", subscription_id, change_payload)
-        await self._call_sm(self.sm_client.change_slice(change_payload), "SM change_slice")
+        change_payload = self._build_change_payload(record.sm_slice_id, sm_snssai, dnn)
+        logger.info("→ SM change_slice (PUT)  sub=%s  imsi=%s", subscription_id, record.imsi)
+        sm_req_id = await self._call_sm(
+            self.sm_client.change_slice(record.imsi, change_payload), "SM change_slice"
+        )
+        if sm_req_id:
+            asyncio.create_task(
+                poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
+                name=f"poll-{sm_req_id[:8]}",
+            )
 
         # Update store
         sub_data = self._sub_to_dict(body, scs_as_id, subscription_id)
@@ -627,9 +626,16 @@ class TranslatorService(BaseTranslatorApi):
             sm_snssai = f"{sst}-{sd}" if sd else str(sst)
             dnn = merged_sub.dnn or tb.DEFAULT_DNN
 
-            change_payload = self._build_change_payload(record.imsi, record.sm_slice_id, sm_snssai, dnn)
-            logger.info("→ SM change_slice (PATCH)  sub=%s  %s", subscription_id, change_payload)
-            await self._call_sm(self.sm_client.change_slice(change_payload), "SM change_slice")
+            change_payload = self._build_change_payload(record.sm_slice_id, sm_snssai, dnn)
+            logger.info("→ SM change_slice (PATCH)  sub=%s  imsi=%s", subscription_id, record.imsi)
+            sm_req_id = await self._call_sm(
+                self.sm_client.change_slice(record.imsi, change_payload), "SM change_slice"
+            )
+            if sm_req_id:
+                asyncio.create_task(
+                    poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
+                    name=f"poll-{sm_req_id[:8]}",
+                )
 
         # Update store
         existing["self"] = self._self_link(scs_as_id, subscription_id)
@@ -662,14 +668,13 @@ class TranslatorService(BaseTranslatorApi):
 
             async with self._get_slice_lock(sm_snssai, dnn):
                 # Dissociate UE from the slice
-                dissociate_payload = self._build_dissociate_payload(imsi, slice_id, sm_snssai)
                 logger.info(
                     "→ SM dissociate_slice  sub=%s  slice=%s  imsi=%s",
                     subscription_id, slice_id, imsi,
                 )
                 try:
                     await self._call_sm(
-                        self.sm_client.dissociate_slice(dissociate_payload),
+                        self.sm_client.dissociate_slice(imsi, slice_id),
                         "SM dissociate_slice",
                     )
                 except HTTPException as exc:
@@ -682,17 +687,48 @@ class TranslatorService(BaseTranslatorApi):
 
                 if new_ref_count == 0:
                     logger.info("→ SM delete_slice  slice=%s", slice_id)
-                    await self._call_sm(
-                        self.sm_client.delete_slice({"id": slice_id}), "SM delete_slice"
+                    sm_req_id = await self._call_sm(
+                        self.sm_client.delete_slice(slice_id), "SM delete_slice"
                     )
+                    if sm_req_id:
+                        asyncio.create_task(
+                            poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
+                            name=f"poll-{sm_req_id[:8]}",
+                        )
                     self.slice_registry_repo.delete(sm_snssai, dnn)
         else:
             # Legacy subscription without a registry entry — delete directly
             logger.warning(
                 "No registry entry for slice %s — falling back to direct delete", slice_id
             )
-            await self._call_sm(
-                self.sm_client.delete_slice({"id": slice_id}), "SM delete_slice"
+            sm_req_id = await self._call_sm(
+                self.sm_client.delete_slice(slice_id), "SM delete_slice"
             )
+            if sm_req_id:
+                asyncio.create_task(
+                    poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
+                    name=f"poll-{sm_req_id[:8]}",
+                )
 
         store.delete(scs_as_id, subscription_id)
+
+    # ------------------------------------------------------------------ #
+    #  GET /operations/{operationId}                                      #
+    # ------------------------------------------------------------------ #
+    async def get_operation(self, operation_id: str) -> "OperationStatus":
+        """Return the current status of a previously submitted operation."""
+        from app.models.operation import OperationStatus  # local import avoids circular
+
+        record = self.operation_repo.get(operation_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Operation not found")
+        return OperationStatus(
+            operationId=record["operation_id"],
+            status=record["status"],
+            subscriptionId=record.get("subscription_id"),
+            smSliceId=record.get("sm_slice_id"),
+            smRequestId=record.get("sm_request_id"),
+            error=record.get("error"),
+            createdAt=record.get("created_at"),
+            updatedAt=record.get("updated_at"),
+        )

@@ -22,11 +22,11 @@ def test_duplicate_create_with_same_idempotency_key_returns_202(sqlite_db, monke
 
     async def _create(self, payload):
         calls["create"] += 1
-        return None
+        return ""
 
-    async def _associate(self, payload):
+    async def _associate(self, ue_id, payload):
         calls["associate"] += 1
-        return None
+        return ""
 
     monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
     monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
@@ -58,11 +58,11 @@ def test_duplicate_create_without_header_uses_fingerprint(sqlite_db, monkeypatch
 
     async def _create(self, payload):
         calls["create"] += 1
-        return None
+        return ""
 
-    async def _associate(self, payload):
+    async def _associate(self, ue_id, payload):
         calls["associate"] += 1
-        return None
+        return ""
 
     monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
     monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)

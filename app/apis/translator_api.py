@@ -12,6 +12,7 @@
       PUT    /{scsAsId}/subscriptions/{subscriptionId} → full replace
       PATCH  /{scsAsId}/subscriptions/{subscriptionId} → partial update
       DELETE /{scsAsId}/subscriptions/{subscriptionId} → delete
+      GET    /operations/{operationId}                 → poll async op
 
     Each handler delegates to the registered BaseTranslatorApi implementation.
     Subclass discovery happens automatically via pkgutil/importlib.
@@ -39,7 +40,7 @@ from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
-from app.models.operation import OperationAccepted
+from app.models.operation import OperationAccepted, OperationStatus
 from app.utils.idempotency import extract_idempotency_key
 
 
@@ -246,3 +247,26 @@ async def delete_subscription(
     """Delete the subscription and release SM slice resources."""
     await _impl().delete_subscription(scsAsId, subscriptionId)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# GET /operations/{operationId}
+# Poll the status of an async operation (create subscription)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/operations/{operationId}",
+    responses={
+        200: {"description": "Operation status"},
+        404: {"description": "Operation not found"},
+    },
+    tags=["Operations"],
+    summary="Get async operation status",
+    response_model=OperationStatus,
+    response_model_by_alias=True,
+    response_model_exclude_none=True,
+)
+async def get_operation(
+    operationId: str = Path(..., description="Operation ID returned by the create endpoint"),
+) -> OperationStatus:
+    """Return the current status of a previously submitted operation."""
+    return await _impl().get_operation(operationId)

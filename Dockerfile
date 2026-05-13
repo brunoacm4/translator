@@ -1,5 +1,5 @@
-# Build context: bolsa_IT/
-# docker build -f translator-develop/Dockerfile .
+# Build context: translator-develop/
+# docker build -t translator-develop .
 FROM python:3.11-slim-bookworm
 
 RUN groupadd --system --gid 10001 nonroot \
@@ -7,16 +7,12 @@ RUN groupadd --system --gid 10001 nonroot \
 
 WORKDIR /app
 
-# Copy the generated messages lib (local path dependency)
-COPY slice-manager/libs/messages /app/libs/messages
-
 # Copy translator source
 COPY translator/pyproject.toml .
 COPY translator/app ./app
 
-# Install the libs dependency then the translator
-RUN pip install --no-cache-dir /app/libs/messages && \
-    pip install --no-cache-dir \
+# Install translator dependencies
+RUN pip install --no-cache-dir \
         fastapi==0.115.2 \
         "httpx>=0.27.0" \
         "pydantic>=2.12.5" \

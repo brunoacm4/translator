@@ -108,6 +108,27 @@ class Settings(BaseSettings):
         description="Maximum wait time in seconds between retry attempts.",
     )
 
+    # ── SM operation polling ──────────────────────────────────────────
+
+    sm_poll_initial_interval: float = Field(
+        default=2.0,
+        description=(
+            "Initial polling interval in seconds when waiting for an async SM "
+            "operation to complete. Doubles on each attempt up to sm_poll_max_interval."
+        ),
+    )
+    sm_poll_max_interval: float = Field(
+        default=30.0,
+        description="Maximum polling interval cap in seconds (exponential backoff ceiling).",
+    )
+    sm_poll_timeout: float = Field(
+        default=300.0,
+        description=(
+            "Total time in seconds before a polling task gives up and marks "
+            "the operation as failed. Default 5 minutes."
+        ),
+    )
+
     # ── Translator state persistence ─────────────────────────────────
 
     translator_db_path: str = Field(

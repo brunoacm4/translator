@@ -4,8 +4,7 @@
     Slice Manager HTTP Client
 
     Thin async wrapper around the IT Aveiro Slice Manager REST API.
-    Each method accepts a plain ``dict`` payload and fires an HTTP POST
-    to the corresponding SM endpoint.
+    Each method maps to a REST endpoint on the SM control-api.
 
     Resilience features
     -------------------
@@ -15,7 +14,7 @@
        network failures (timeout, connection refused) before giving up.
     2. **Circuit breaker** — after ``CB_FAILURE_THRESHOLD`` consecutive failures
        the circuit opens and subsequent calls fail immediately with HTTP 503,
-       avoiding 30 s Selenium timeouts piling up during SM maintenance.
+       avoiding timeouts piling up during SM maintenance.
 
     Singleton connection pool
     -------------------------
@@ -23,8 +22,9 @@
     so the TCP connection pool is shared across all requests.  Call
     ``SliceManagerClient.close_shared()`` during graceful shutdown.
 
-    The SM returns **empty bodies** (HTTP 200) on success, so all methods
-    return ``None``.
+    SM write operations return 202 with ``{request_id, state}``.
+    All write methods return the ``request_id`` string so callers can
+    launch a polling task for async completion tracking.
 """
 
 from __future__ import annotations
@@ -42,99 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Shared httpx client — one connection pool for the entire process lifetime
 _shared_http_client: Optional[httpx.AsyncClient] = None
-
-
-# Whitelisted outbound keys per Slice Manager endpoint.
-_ALLOWED_FIELDS_BY_PATH: Dict[str, set[str]] = {
-    "/core/slice/create": {
-        "id",
-        "administrative_state",
-        "operational_state",
-        "coverage_area",
-        "sst",
-        "sd",
-        "dnn",
-        "prioritylabel",
-        "uemobilitylevel",
-        "reliability",
-        "ulmaxpktsize",
-        "dlmaxpktsize",
-        "schedulingtype",
-        "dlrbmin",
-        "dlrbmax",
-        "ulrbmin",
-        "ulrbmax",
-        "dllatency",
-        "ullatency",
-        "delaytolerance",
-        "dldeterministiccomm",
-        "dldeterminperiodicity",
-        "uldeterministiccomm",
-        "uldeterminperiodicity",
-        "dlguathptperue",
-        "ulguathptperue",
-        "dlmaxthptperue",
-        "ulmaxthptperue",
-        "dlguathptperslice",
-        "ulguathptperslice",
-        "dlmaxthptperslice",
-        "ulmaxthptperslice",
-        "termdensity",
-        "maxnumberofpdusessions",
-        "maxnumberofues",
-        "n6protection",
-    },
-    "/core/slice/associate": {
-        "imsi",
-        "slice",
-        "numimsis",
-        "ipv4",
-        "ipv6",
-        "operational_state",
-        "amdata",
-        "default",
-        "uecansendsnssai",
-        "ambrup",
-        "ambrdw",
-        "snssai",
-    },
-    "/core/slice/change": {
-        "imsi",
-        "slice",
-        "dnn",
-        "numimsis",
-        "ipv4",
-        "ipv6",
-        "operational_state",
-        "amdata",
-        "default",
-        "uecansendsnssai",
-        "ambrup",
-        "ambrdw",
-        "snssai",
-    },
-    "/core/slice/delete": {"id"},
-    "/core/slice/dissociate": {
-        "imsi",
-        "slice",
-        "snssai",
-        "amdata",
-        "operational_state",
-    },
-}
-
-
-# Backward-compatible aliases used by current translator internals.
-_KEY_ALIASES_BY_PATH: Dict[str, Dict[str, str]] = {
-    "/core/slice/associate": {
-        "numIMSIs": "numimsis",
-        "uecanSendSNSSAI": "uecansendsnssai",
-    },
-    "/core/slice/change": {
-        "numIMSIs": "numimsis",
-        "uecanSendSNSSAI": "uecansendsnssai",
-    },
-}
 
 
 class SliceManagerClient:
@@ -166,54 +73,19 @@ class SliceManagerClient:
 
     # -- internal helper -----------------------------------------------------
 
-    @staticmethod
-    def _sanitize_payload(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
-        Canonicalize + whitelist payload keys for a specific SM endpoint.
+        Fire an HTTP request to the SM, wrapped with retry and circuit breaker.
 
-        - Applies known key aliases (e.g. numIMSIs -> numimsis)
-        - Drops keys not accepted by the target endpoint
-        - Drops keys whose value is None
-        """
-        allowed = _ALLOWED_FIELDS_BY_PATH.get(path)
-        aliases = _KEY_ALIASES_BY_PATH.get(path, {})
-
-        if allowed is None:
-            # Unknown endpoint: keep backward-compatible behavior, only remove nulls.
-            return {k: v for k, v in payload.items() if v is not None}
-
-        sanitized: Dict[str, Any] = {}
-        dropped: list[str] = []
-
-        for key, value in payload.items():
-            canonical_key = aliases.get(key, key)
-            if value is None:
-                dropped.append(key)
-                continue
-            if canonical_key in allowed:
-                sanitized[canonical_key] = value
-            else:
-                dropped.append(key)
-
-        if dropped:
-            logger.debug(
-                "SM payload sanitized for %s: dropped_keys=%s",
-                path,
-                sorted(set(dropped)),
-            )
-
-        return sanitized
-
-    async def _post(self, path: str, payload: Dict[str, Any]) -> None:
-        """
-        Fire a POST request to the SM, wrapped with retry and circuit breaker.
-
-        Call order:  circuit_breaker.call  →  retry_with_backoff  →  httpx.post
-
-        This means:
-        - If the circuit is OPEN: fail immediately with CircuitBreakerOpen (→ 503)
-        - If a transient error occurs: retry up to RETRY_MAX_ATTEMPTS times
-        - If retries are exhausted or SM returns 4xx/5xx: raise the exception
+        Returns:
+            The ``request_id`` UUID string from the SM 202 response body.
+            Returns an empty string if the response body is not JSON or the
+            ``request_id`` field is absent (should not happen with a spec-compliant SM).
 
         Raises:
             CircuitBreakerOpen    - circuit is OPEN, SM appears to be down
@@ -221,95 +93,119 @@ class SliceManagerClient:
             httpx.ConnectError
             httpx.HTTPStatusError
         """
-        payload = self._sanitize_payload(path, payload)
-        logger.info("SM POST %s  payload_keys=%s", path, list(payload.keys()))
+        if payload is not None:
+            logger.info("SM %s %s  payload_keys=%s", method, path, list(payload.keys()))
+        else:
+            logger.info("SM %s %s", method, path)
 
-        async def _attempt() -> None:
+        async def _attempt() -> str:
             client = await self._get_client()
+            kwargs: Dict[str, Any] = {}
+            if payload is not None:
+                kwargs["json"] = payload
             try:
-                resp = await client.post(path, json=payload)
+                resp = await client.request(method, path, **kwargs)
                 resp.raise_for_status()
-                logger.info("SM POST %s  → %s", path, resp.status_code)
+                sm_request_id = ""
+                try:
+                    sm_request_id = str(resp.json().get("request_id", ""))
+                except Exception:
+                    pass
+                logger.info(
+                    "SM %s %s  → %s  sm_req=%s",
+                    method, path, resp.status_code, sm_request_id or "(none)",
+                )
+                return sm_request_id
             except httpx.TimeoutException:
                 logger.error(
-                    "SM POST %s  → TIMEOUT (%.0fs)", path, settings.sm_timeout
+                    "SM %s %s  → TIMEOUT (%.0fs)", method, path, settings.sm_timeout
                 )
                 raise
             except httpx.ConnectError as exc:
-                logger.error("SM POST %s  → CONNECTION REFUSED (%s)", path, exc)
+                logger.error("SM %s %s  → CONNECTION REFUSED (%s)", method, path, exc)
                 raise
             except httpx.HTTPStatusError as exc:
                 logger.error(
-                    "SM POST %s  → HTTP %s  body=%s",
+                    "SM %s %s  → HTTP %s  body=%s",
+                    method,
                     path,
                     exc.response.status_code,
                     exc.response.text[:200],
                 )
                 raise
 
-        try:
-            await sm_circuit_breaker.call(
-                retry_with_backoff(_attempt, operation_name=f"SM POST {path}")
-            )
-        except CircuitBreakerOpen as exc:
-            # Re-raise so translator_service maps it to 503
-            raise
+        return await sm_circuit_breaker.call(
+            retry_with_backoff(_attempt, operation_name=f"SM {method} {path}")
+        )
 
     # -- SM endpoints --------------------------------------------------------
 
-    async def create_slice(self, payload: Dict[str, Any]) -> None:
+    async def create_slice(self, payload: Dict[str, Any]) -> str:
         """
-        POST /core/slice/create
+        POST /core/slices
 
-        Creates a new network slice in the Slice Manager core.
-        The SM returns an empty body — the translator generates the
-        ``slice_id`` beforehand and passes it inside the payload.
-
-        Args:
-            payload: Dict matching CoreSliceCreatePostRequest fields.
+        Returns:
+            SM ``request_id`` from the 202 response.
         """
-        await self._post("/core/slice/create", payload)
+        return await self._request("POST", "/core/slices", payload)
 
-    async def associate_slice(self, payload: Dict[str, Any]) -> None:
+    async def delete_slice(self, slice_id: str) -> str:
         """
-        POST /core/slice/associate
+        DELETE /core/slices/{slice_id}
 
-        Associates a UE (IMSI) with an existing slice.
-
-        Args:
-            payload: Dict matching CoreSliceAssociatePostRequest fields.
+        Returns:
+            SM ``request_id`` from the 202 response.
         """
-        await self._post("/core/slice/associate", payload)
+        return await self._request("DELETE", f"/core/slices/{slice_id}")
 
-    async def change_slice(self, payload: Dict[str, Any]) -> None:
+    async def associate_slice(self, ue_id: str, payload: Dict[str, Any]) -> str:
         """
-        POST /core/slice/change
+        POST /core/ues/{ue_id}/slice-associations
 
-        Modifies QoS / throughput parameters of an existing slice association.
-
-        Args:
-            payload: Dict matching CoreSliceChangePostRequest fields.
+        Returns:
+            SM ``request_id`` from the 202 response.
         """
-        await self._post("/core/slice/change", payload)
+        return await self._request("POST", f"/core/ues/{ue_id}/slice-associations", payload)
 
-    async def delete_slice(self, payload: Dict[str, Any]) -> None:
+    async def dissociate_slice(self, ue_id: str, slice_id: str) -> str:
         """
-        POST /core/slice/delete
+        DELETE /core/ues/{ue_id}/slice-associations/{slice_id}
 
-        Deletes (terminates) a slice in the Slice Manager core.
-
-        Args:
-            payload: Dict matching CoreSliceDeletePostRequest fields.
+        Returns:
+            SM ``request_id`` from the 202 response.
         """
-        await self._post("/core/slice/delete", payload)
+        return await self._request("DELETE", f"/core/ues/{ue_id}/slice-associations/{slice_id}")
 
-    async def dissociate_slice(self, payload: Dict[str, Any]) -> None:
+    async def change_slice(self, ue_id: str, payload: Dict[str, Any]) -> str:
         """
-        POST /core/slice/dissociate
+        PATCH /core/ues/{ue_id}/slice-associations
 
-        Dissociates a UE (IMSI) from an existing slice.
-
-        Args:
-            payload: Dict matching CoreSliceDissociatePostRequest fields.
+        Returns:
+            SM ``request_id`` from the 202 response.
         """
-        await self._post("/core/slice/dissociate", payload)
+        return await self._request("PATCH", f"/core/ues/{ue_id}/slice-associations", payload)
+
+    async def get_request_status(self, sm_request_id: str) -> Dict[str, Any]:
+        """
+        GET /operations/{sm_request_id}
+
+        Poll a previously submitted async SM operation.
+        This call bypasses the circuit breaker and retry logic — it is a
+        lightweight read used only by the background polling task.
+
+        Returns:
+            Dict with at least ``{"request_id": str, "state": str}``.
+            ``state`` is one of ``"pending"``, ``"published"``, ``"processing"``,
+            ``"completed"``, ``"failed"``.
+
+        Raises:
+            httpx.HTTPStatusError  - SM returned 4xx/5xx
+            httpx.TimeoutException - SM did not respond in time
+        """
+        client = await self._get_client()
+        resp = await client.get(
+            f"/operations/{sm_request_id}",
+            timeout=settings.sm_health_timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
