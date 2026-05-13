@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -22,10 +23,12 @@ from fastapi.responses import JSONResponse
 from app.apis.translator_api import router as TranslatorApiRouter
 from app.config.settings import settings
 from app.impl.sm_client import SliceManagerClient
+from app.impl.sm_poller import poll_sm_request
 from app.logging_config import configure_logging
 from app.middleware.correlation_id import CorrelationIdMiddleware
 from app.resilience.circuit_breaker import sm_circuit_breaker
 from app.store.subscription_store import store
+from app.store.repositories import OperationRepository
 from app.db.schema import init_db
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     configure_logging(log_level=settings.log_level, json_logs=settings.log_json)
     init_db()
+
+    # Resume polling for operations that were in flight when the process was last killed
+    pending_ops = OperationRepository().get_resumable()
+    if pending_ops:
+        logger.info("Resuming %d in-flight SM polling task(s)", len(pending_ops))
+        for op in pending_ops:
+            asyncio.create_task(
+                poll_sm_request(
+                    sm_request_id=op["sm_request_id"],
+                    operation_id=op["operation_id"],
+                    notification_url=op.get("notification_url"),
+                    subscription_id=op.get("subscription_id"),
+                ),
+                name=f"poll-resume-{op['sm_request_id'][:8]}",
+            )
+
     logger.info(
         "Translator starting  sm_base_url=%s  log_level=%s  json_logs=%s  "
         "cb_threshold=%d  retry_attempts=%d  db_path=%s",

@@ -181,7 +181,8 @@ class OperationRepository:
         row = conn.execute(
             """
             SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
-                   status, subscription_id, sm_slice_id, error, created_at, updated_at
+                   status, subscription_id, sm_slice_id, sm_request_id,
+                   notification_url, error, created_at, updated_at
             FROM operations
             WHERE operation_id = ?
             """,
@@ -196,6 +197,8 @@ class OperationRepository:
         status: str,
         subscription_id: Optional[str] = None,
         sm_slice_id: Optional[str] = None,
+        sm_request_id: Optional[str] = None,
+        notification_url: Optional[str] = None,
         error: Optional[str] = None,
     ) -> bool:
         now = _now_iso()
@@ -207,13 +210,42 @@ class OperationRepository:
                     status = ?,
                     subscription_id = COALESCE(?, subscription_id),
                     sm_slice_id = COALESCE(?, sm_slice_id),
+                    sm_request_id = COALESCE(?, sm_request_id),
+                    notification_url = COALESCE(?, notification_url),
                     error = COALESCE(?, error),
                     updated_at = ?
                 WHERE operation_id = ?
                 """,
-                (status, subscription_id, sm_slice_id, error, now, operation_id),
+                (
+                    status,
+                    subscription_id,
+                    sm_slice_id,
+                    sm_request_id,
+                    notification_url,
+                    error,
+                    now,
+                    operation_id,
+                ),
             )
             return cur.rowcount > 0
+
+    def get_resumable(self) -> List[Dict[str, Any]]:
+        """Return operations in ``sm_provisioning`` state that have a
+        ``sm_request_id`` — these need their polling task resumed after
+        a process restart.
+        """
+        conn = get_connection()
+        rows = conn.execute(
+            """
+            SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
+                   status, subscription_id, sm_slice_id, sm_request_id,
+                   notification_url, error, created_at, updated_at
+            FROM operations
+            WHERE status = 'sm_provisioning'
+              AND sm_request_id IS NOT NULL
+            """,
+        ).fetchall()
+        return [self._to_dict(r) for r in rows if r]
 
     @staticmethod
     def _to_dict(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
@@ -227,6 +259,8 @@ class OperationRepository:
             "status": row["status"],
             "subscription_id": row["subscription_id"],
             "sm_slice_id": row["sm_slice_id"],
+            "sm_request_id": row["sm_request_id"],
+            "notification_url": row["notification_url"],
             "error": row["error"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],

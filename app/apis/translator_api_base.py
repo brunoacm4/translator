@@ -18,7 +18,7 @@ from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
-from app.models.operation import OperationAccepted
+from app.models.operation import OperationAccepted, OperationStatus
 
 
 class BaseTranslatorApi:
@@ -77,4 +77,8 @@ class BaseTranslatorApi:
         subscription_id: str,
     ) -> None:
         """DELETE /{scsAsId}/subscriptions/{subscriptionId} → SM delete."""
+        ...
+
+    async def get_operation(self, operation_id: str) -> OperationStatus:
+        """GET /operations/{operationId} → return stored operation status."""
         ...
