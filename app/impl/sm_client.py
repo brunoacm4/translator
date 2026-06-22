@@ -78,9 +78,17 @@ class SliceManagerClient:
         method: str,
         path: str,
         payload: Optional[Dict[str, Any]] = None,
+        tolerate_not_found: bool = False,
     ) -> str:
         """
         Fire an HTTP request to the SM, wrapped with retry and circuit breaker.
+
+        Args:
+            tolerate_not_found: When True, a ``404 Not Found`` response is
+                treated as success (empty ``request_id`` returned) instead of
+                raising. Used by the DELETE endpoints so the translator's
+                delete is idempotent — removing a resource the SM no longer
+                knows about is the desired end state, not an error.
 
         Returns:
             The ``request_id`` UUID string from the SM 202 response body.
@@ -125,6 +133,13 @@ class SliceManagerClient:
                 logger.error("SM %s %s  → CONNECTION REFUSED (%s)", method, path, exc)
                 raise
             except httpx.HTTPStatusError as exc:
+                if tolerate_not_found and exc.response.status_code == 404:
+                    # Idempotent delete: the resource is already gone — success.
+                    logger.info(
+                        "SM %s %s  → 404 (already absent, treated as success)",
+                        method, path,
+                    )
+                    return ""
                 logger.error(
                     "SM %s %s  → HTTP %s  body=%s",
                     method,
@@ -153,10 +168,14 @@ class SliceManagerClient:
         """
         DELETE /core/slices/{slice_id}
 
+        Idempotent: a 404 (slice unknown to the SM) is treated as success.
+
         Returns:
-            SM ``request_id`` from the 202 response.
+            SM ``request_id`` from the 202 response, or "" if already absent.
         """
-        return await self._request("DELETE", f"/core/slices/{slice_id}")
+        return await self._request(
+            "DELETE", f"/core/slices/{slice_id}", tolerate_not_found=True
+        )
 
     async def associate_slice(self, ue_id: str, payload: Dict[str, Any]) -> str:
         """
@@ -171,10 +190,16 @@ class SliceManagerClient:
         """
         DELETE /core/ues/{ue_id}/slice-associations/{slice_id}
 
+        Idempotent: a 404 (association unknown to the SM) is treated as success.
+
         Returns:
-            SM ``request_id`` from the 202 response.
+            SM ``request_id`` from the 202 response, or "" if already absent.
         """
-        return await self._request("DELETE", f"/core/ues/{ue_id}/slice-associations/{slice_id}")
+        return await self._request(
+            "DELETE",
+            f"/core/ues/{ue_id}/slice-associations/{slice_id}",
+            tolerate_not_found=True,
+        )
 
     async def change_slice(self, ue_id: str, payload: Dict[str, Any]) -> str:
         """

@@ -54,20 +54,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(log_level=settings.log_level, json_logs=settings.log_json)
     init_db()
 
-    # Resume polling for operations that were in flight when the process was last killed
-    pending_ops = OperationRepository().get_resumable()
-    if pending_ops:
-        logger.info("Resuming %d in-flight SM polling task(s)", len(pending_ops))
-        for op in pending_ops:
-            asyncio.create_task(
-                poll_sm_request(
-                    sm_request_id=op["sm_request_id"],
-                    operation_id=op["operation_id"],
-                    notification_url=op.get("notification_url"),
-                    subscription_id=op.get("subscription_id"),
-                ),
-                name=f"poll-resume-{op['sm_request_id'][:8]}",
-            )
+    # Resume polling for operations that were in flight when the process was last
+    # killed. Only relevant while SM async polling is enabled — see
+    # settings.sm_polling_enabled (the SM has no /operations endpoint yet).
+    if settings.sm_polling_enabled:
+        pending_ops = OperationRepository().get_resumable()
+        if pending_ops:
+            logger.info("Resuming %d in-flight SM polling task(s)", len(pending_ops))
+            for op in pending_ops:
+                asyncio.create_task(
+                    poll_sm_request(
+                        sm_request_id=op["sm_request_id"],
+                        operation_id=op["operation_id"],
+                        notification_url=op.get("notification_url"),
+                        subscription_id=op.get("subscription_id"),
+                    ),
+                    name=f"poll-resume-{op['sm_request_id'][:8]}",
+                )
 
     logger.info(
         "Translator starting  sm_base_url=%s  log_level=%s  json_logs=%s  "

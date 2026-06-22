@@ -64,10 +64,13 @@ def test_associate_payload_uses_new_rest_field_names() -> None:
         body=body,
         slice_id="slice-1",
         snssai="1-000001",
+        dnn="internet",
     )
 
     assert payload["slice_id"] == "slice-1"
     assert payload["snssai"] == "1-000001"
+    # dnn is required by the SM UeSliceAssociationCreateRequest contract
+    assert payload["dnn"] == "internet"
     assert payload["static_ipv4_address"] == "10.0.0.1"
     assert payload["access_mobility_data"] is True
     assert payload["default_association"] is True
@@ -75,7 +78,6 @@ def test_associate_payload_uses_new_rest_field_names() -> None:
     # Old field names must be absent
     assert "imsi" not in payload
     assert "slice" not in payload
-    assert "dnn" not in payload
     assert "numIMSIs" not in payload
     assert "ipv6" not in payload
 

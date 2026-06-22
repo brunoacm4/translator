@@ -1,5 +1,5 @@
-# Build context: translator-develop/
-# docker build -t translator-develop .
+# Build context: repository root (..), selected via docker-compose.
+# The root .dockerignore whitelists translator-develop/ sources.
 FROM python:3.11-slim-bookworm
 
 RUN groupadd --system --gid 10001 nonroot \
@@ -7,9 +7,9 @@ RUN groupadd --system --gid 10001 nonroot \
 
 WORKDIR /app
 
-# Copy translator source
-COPY pyproject.toml .
-COPY app ./app
+# Copy translator source (paths relative to the repo-root build context)
+COPY translator-develop/pyproject.toml .
+COPY translator-develop/app ./app
 
 # Install translator dependencies
 RUN pip install --no-cache-dir \

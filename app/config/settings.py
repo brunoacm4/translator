@@ -110,6 +110,17 @@ class Settings(BaseSettings):
 
     # ── SM operation polling ──────────────────────────────────────────
 
+    sm_polling_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for async SM operation polling. The Slice Manager "
+            "does not yet implement GET /operations/{request_id} (returns 500), "
+            "so by default the translator treats the synchronous 202 "
+            "(state='published') as the terminal result and skips polling. "
+            "Set to true once the SM exposes the operations endpoint to "
+            "re-enable background polling and NEF completion callbacks."
+        ),
+    )
     sm_poll_initial_interval: float = Field(
         default=2.0,
         description=(

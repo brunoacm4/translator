@@ -1,0 +1,875 @@
+# 3GPP TS 29.122 AsSessionWithQoS — Translator northbound API
+# Generated from the FastAPI app (app.main:app). Do not edit by hand.
+# Regenerate: see schemas/README.md
+openapi: 3.1.0
+info:
+  title: 3GPP AsSessionWithQoS Translator
+  description: Middleware that exposes the 3GPP TS 29.122 AsSessionWithQoS API and translates requests
+    into IT Aveiro Slice Manager operations.
+  version: 1.0.0
+paths:
+  /3gpp-as-session-with-qos/v1/{scsAsId}/subscriptions:
+    post:
+      tags:
+      - AS Session with Required QoS Subscriptions
+      summary: Create a new AS session with QoS subscription
+      description: 'Receives a 3GPP AsSessionWithQoSSubscription, translates it into
+
+        Slice Manager payloads, creates + associates the slice, stores the
+
+        subscription, and returns the full resource with a Location header.'
+      operationId: create_subscription_3gpp_as_session_with_qos_v1__scsAsId__subscriptions_post
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+              description: AS session with QoS subscription resource
+      responses:
+        '201':
+          description: Subscription created successfully
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+                - $ref: '#/components/schemas/OperationAccepted'
+                title: Response Create Subscription 3Gpp As Session With Qos V1  Scsasid  Subscriptions
+                  Post
+        '202':
+          description: Duplicate request accepted (existing operation returned)
+        '400':
+          description: Bad request — invalid 3GPP payload
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+        '503':
+          description: Slice Manager unavailable
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - AS Session with Required QoS Subscriptions
+      summary: List all active subscriptions
+      description: Return all active subscriptions, optionally filtered by UE IP.
+      operationId: list_subscriptions_3gpp_as_session_with_qos_v1__scsAsId__subscriptions_get
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      - name: ip-addrs
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Comma-separated UE IP addresses to filter by
+          title: Ip-Addrs
+        description: Comma-separated UE IP addresses to filter by
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+                title: Response List Subscriptions 3Gpp As Session With Qos V1  Scsasid  Subscriptions
+                  Get
+        '400':
+          description: Bad request
+        '404':
+          description: SCS/AS not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /3gpp-as-session-with-qos/v1/{scsAsId}/subscriptions/{subscriptionId}:
+    get:
+      tags:
+      - Individual AS Session with Required QoS Subscription
+      summary: Read an active subscription
+      description: Return one subscription resource.
+      operationId: get_subscription_3gpp_as_session_with_qos_v1__scsAsId__subscriptions__subscriptionId__get
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      - name: subscriptionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the subscription
+          title: Subscriptionid
+        description: Identifier of the subscription
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+        '404':
+          description: Subscription not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - Individual AS Session with Required QoS Subscription
+      summary: Replace an existing subscription
+      description: Replace the entire subscription resource and push changes to the SM.
+      operationId: update_subscription_3gpp_as_session_with_qos_v1__scsAsId__subscriptions__subscriptionId__put
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      - name: subscriptionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the subscription
+          title: Subscriptionid
+        description: Identifier of the subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+              description: Full subscription replacement
+      responses:
+        '200':
+          description: Subscription updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+        '204':
+          description: Subscription updated (no content)
+        '404':
+          description: Subscription not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - Individual AS Session with Required QoS Subscription
+      summary: Modify an existing subscription
+      description: Partially update the subscription and push changes to the SM.
+      operationId: patch_subscription_3gpp_as_session_with_qos_v1__scsAsId__subscriptions__subscriptionId__patch
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      - name: subscriptionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the subscription
+          title: Subscriptionid
+        description: Identifier of the subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AsSessionWithQoSSubscriptionPatch'
+              description: Partial subscription update (merge-patch+json)
+      responses:
+        '200':
+          description: Subscription modified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsSessionWithQoSSubscription'
+        '204':
+          description: Subscription modified (no content)
+        '404':
+          description: Subscription not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Individual AS Session with Required QoS Subscription
+      summary: Delete a subscription
+      description: Delete the subscription and release SM slice resources.
+      operationId: delete_subscription_3gpp_as_session_with_qos_v1__scsAsId__subscriptions__subscriptionId__delete
+      parameters:
+      - name: scsAsId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the SCS/AS
+          title: Scsasid
+        description: Identifier of the SCS/AS
+      - name: subscriptionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Identifier of the subscription
+          title: Subscriptionid
+        description: Identifier of the subscription
+      responses:
+        '204':
+          description: Subscription deleted
+        '200':
+          description: Subscription deleted (with notification data)
+        '404':
+          description: Subscription not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /3gpp-as-session-with-qos/v1/operations/{operationId}:
+    get:
+      tags:
+      - Operations
+      summary: Get async operation status
+      description: Return the current status of a previously submitted operation.
+      operationId: get_operation_3gpp_as_session_with_qos_v1_operations__operationId__get
+      parameters:
+      - name: operationId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Operation ID returned by the create endpoint
+          title: Operationid
+        description: Operation ID returned by the create endpoint
+      responses:
+        '200':
+          description: Operation status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatus'
+        '404':
+          description: Operation not found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /health:
+    get:
+      tags:
+      - ops
+      summary: Health Check
+      description: "Liveness / readiness probe.\n\nReturns SM reachability, circuit-breaker state, and\
+        \ subscription count\nso Grafana dashboards can track translator health at a glance.\n\nHTTP status:\n\
+        \  200 — SM reachable and circuit CLOSED / HALF_OPEN\n  503 — SM unreachable or circuit OPEN"
+      operationId: health_check_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+components:
+  schemas:
+    AsSessionWithQoSSubscription:
+      properties:
+        self:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Self
+          description: URI of this subscription resource (set by the server)
+        supportedFeatures:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supportedfeatures
+          description: Negotiated supported features (hex string)
+        dnn:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dnn
+          description: Data Network Name
+        snssai:
+          anyOf:
+          - $ref: '#/components/schemas/Snssai'
+          - type: 'null'
+          description: Single Network Slice Selection Assistance Information
+        notificationDestination:
+          type: string
+          title: Notificationdestination
+          description: Callback URL for asynchronous user-plane event notifications
+        exterAppId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Exterappid
+          description: External Application Identifier
+        flowInfo:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/FlowInfo'
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Flowinfo
+          description: IP data flows requiring QoS
+        ethFlowInfo:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Ethflowinfo
+          description: Ethernet packet flows (stored as-is)
+        enEthFlowInfo:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Enethflowinfo
+          description: Enhanced Ethernet flows (stored as-is)
+        qosReference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Qosreference
+          description: Pre-defined QoS reference identifier
+        altQoSReferences:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Altqosreferences
+          description: Ordered list of alternative pre-defined QoS references
+        altQosReqs:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Altqosreqs
+          description: Alternative service requirement sets (stored as-is)
+        disUeNotif:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Disuenotif
+          description: Disable QoS flow parameter signalling to UE
+        ueIpv4Addr:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv4Addr
+          description: UE IPv4 address
+        ipDomain:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ipdomain
+          description: IPv4 address domain identifier
+        ueIpv6Addr:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv6Addr
+          description: UE IPv6 address (prefix)
+        macAddr:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Macaddr
+          description: UE MAC address
+        usageThreshold:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Usagethreshold
+          description: Usage threshold (stored as-is)
+        sponsorInfo:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Sponsorinfo
+          description: Sponsor information (stored as-is)
+        qosMonInfo:
+          anyOf:
+          - $ref: '#/components/schemas/QosMonitoringInformation'
+          - type: 'null'
+          description: QoS monitoring configuration
+        directNotifInd:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Directnotifind
+          description: Request direct event notification
+        tscQosReq:
+          anyOf:
+          - $ref: '#/components/schemas/TscQosRequirement'
+          - type: 'null'
+          description: QoS requirements for time-sensitive communication
+        requestTestNotification:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Requesttestnotification
+          description: Request a test notification
+        websockNotifConfig:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Websocknotifconfig
+          description: WebSocket notification configuration (stored as-is)
+        events:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/UserPlaneEvent'
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Events
+          description: User-plane events to subscribe to
+      type: object
+      required:
+      - notificationDestination
+      title: AsSessionWithQoSSubscription
+      description: 'Represents an individual AS session with required QoS subscription.
+
+
+        ``notificationDestination`` is the only **required** field per the spec.
+
+        All other fields are optional — the translator inspects specific ones
+
+        (``qosReference``, ``snssai``, ``ueIpv4Addr``, ``tscQosReq``, ``dnn``)
+
+        during translation and stores the rest unchanged.'
+    AsSessionWithQoSSubscriptionPatch:
+      properties:
+        exterAppId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Exterappid
+        flowInfo:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/FlowInfo'
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Flowinfo
+        ethFlowInfo:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Ethflowinfo
+        enEthFlowInfo:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Enethflowinfo
+        qosReference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Qosreference
+        altQoSReferences:
+          anyOf:
+          - items:
+              type: string
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Altqosreferences
+        altQosReqs:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Altqosreqs
+        disUeNotif:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Disuenotif
+        usageThreshold:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Usagethreshold
+        qosMonInfo:
+          anyOf:
+          - $ref: '#/components/schemas/QosMonitoringInformation'
+          - type: 'null'
+        directNotifInd:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Directnotifind
+        notificationDestination:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notificationdestination
+        tscQosReq:
+          anyOf:
+          - $ref: '#/components/schemas/TscQosRequirement'
+          - type: 'null'
+        events:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/UserPlaneEvent'
+            type: array
+            minItems: 1
+          - type: 'null'
+          title: Events
+      type: object
+      title: AsSessionWithQoSSubscriptionPatch
+      description: 'Partial update model for PATCH ``application/merge-patch+json``.
+
+
+        Only mutable fields are included — immutable-after-creation fields
+
+        (``snssai``, ``dnn``, ``ueIpv4Addr``, ``ueIpv6Addr``, ``macAddr``,
+
+        ``ipDomain``, ``sponsorInfo``) are excluded per the spec.'
+    FlowInfo:
+      properties:
+        flowId:
+          type: integer
+          title: Flowid
+          description: Unique flow identifier within the subscription
+        flowDescriptions:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Flowdescriptions
+          description: SDF filter strings (IPFilterRule format); omitted for UL-only flows
+      type: object
+      required:
+      - flowId
+      title: FlowInfo
+      description: Describes one IP data flow that requires QoS.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    OperationAccepted:
+      properties:
+        operationId:
+          type: string
+          title: Operationid
+        status:
+          type: string
+          title: Status
+        subscriptionId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Subscriptionid
+      type: object
+      required:
+      - operationId
+      - status
+      title: OperationAccepted
+      description: Immediate 202 response returned when an operation is enqueued.
+    OperationStatus:
+      properties:
+        operationId:
+          type: string
+          title: Operationid
+        status:
+          type: string
+          title: Status
+        subscriptionId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Subscriptionid
+        smSliceId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Smsliceid
+        smRequestId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Smrequestid
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        createdAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Createdat
+        updatedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Updatedat
+      type: object
+      required:
+      - operationId
+      - status
+      title: OperationStatus
+      description: Full operation record returned by ``GET /operations/{operationId}``.
+    QosMonitoringInformation:
+      properties:
+        reqQosMonParams:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Reqqosmonparams
+        repFreqs:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Repfreqs
+        repThreshDl:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Repthreshdl
+        repThreshUl:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Repthreshul
+        repThreshRp:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Repthreshrp
+        waitTime:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Waittime
+        repPeriod:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Repperiod
+      type: object
+      required:
+      - reqQosMonParams
+      - repFreqs
+      title: QosMonitoringInformation
+      description: QoS monitoring configuration attached to a subscription.
+    Snssai:
+      properties:
+        sst:
+          type: integer
+          maximum: 255.0
+          minimum: 0.0
+          title: Sst
+          description: Slice/Service Type (0-255)
+        sd:
+          anyOf:
+          - type: string
+            pattern: ^[A-Fa-f0-9]{6}$
+          - type: 'null'
+          title: Sd
+          description: Slice Differentiator - 6 hex digits, e.g. '000001'
+      type: object
+      required:
+      - sst
+      title: Snssai
+      description: Single Network Slice Selection Assistance Information.
+    TscQosRequirement:
+      properties:
+        reqGbrDl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reqgbrdl
+          description: Required GBR DL (BitRate string, e.g. '10 Mbps')
+        reqGbrUl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reqgbrul
+          description: Required GBR UL (BitRate string)
+        reqMbrDl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reqmbrdl
+          description: Required MBR DL (BitRate string)
+        reqMbrUl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reqmbrul
+          description: Required MBR UL (BitRate string)
+        maxTscBurstSize:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Maxtscburstsize
+          description: Max TSC burst size (bytes)
+        req5Gsdelay:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Req5Gsdelay
+          description: Required 5GS delay budget (ms)
+        priority:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Priority
+          description: TSC priority level
+        tscaiTimeDom:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Tscaitimedom
+          description: TSCAI time domain
+        tscaiInputDl:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Tscaiinputdl
+          description: TSCAI input container DL
+        tscaiInputUl:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Tscaiinputul
+          description: TSCAI input container UL
+      type: object
+      title: TscQosRequirement
+      description: QoS requirements for time-sensitive communication.
+    UserPlaneEvent:
+      type: string
+      enum:
+      - SESSION_TERMINATION
+      - LOSS_OF_BEARER
+      - RECOVERY_OF_BEARER
+      - RELEASE_OF_BEARER
+      - USAGE_REPORT
+      - FAILED_RESOURCES_ALLOCATION
+      - QOS_GUARANTEED
+      - QOS_NOT_GUARANTEED
+      - QOS_MONITORING
+      - SUCCESSFUL_RESOURCES_ALLOCATION
+      - ACCESS_TYPE_CHANGE
+      - PLMN_CHG
+      title: UserPlaneEvent
+      description: User-plane events the SCS/AS can subscribe to.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

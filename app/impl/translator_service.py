@@ -223,6 +223,7 @@ class TranslatorService(BaseTranslatorApi):
         body: AsSessionWithQoSSubscription,
         slice_id: str,
         snssai: str,
+        dnn: str,
     ) -> Dict[str, Any]:
         """
         Build the ``UeSliceAssociationCreateRequest`` dict.
@@ -231,6 +232,7 @@ class TranslatorService(BaseTranslatorApi):
         return {
             "slice_id": slice_id,
             "snssai": snssai,
+            "dnn": dnn,
             "static_ipv4_address": body.ueIpv4Addr or tb.DEFAULT_IPV4,
             "access_mobility_data": True,
             "default_association": True,
@@ -430,6 +432,7 @@ class TranslatorService(BaseTranslatorApi):
                 body,
                 slice_id,
                 sm_snssai,
+                dnn,
             )
             logger.info("→ SM associate_slice  imsi=%s  slice=%s", imsi, slice_id)
             try:
@@ -488,17 +491,18 @@ class TranslatorService(BaseTranslatorApi):
         notification_url: Optional[str] = (
             str(body.notificationDestination) if body.notificationDestination else None
         )
-        self.operation_repo.update_status(
-            operation_id=operation_id,
-            status="sm_provisioning",
-            subscription_id=subscription_id,
-            sm_slice_id=slice_id,
-            sm_request_id=sm_req_id or None,
-            notification_url=notification_url,
-        )
 
-        # Launch background polling task — tracks SM completion and sends callback
-        if sm_req_id:
+        if settings.sm_polling_enabled and sm_req_id:
+            # Async tracking: mark provisioning and poll SM /operations until a
+            # terminal state, then fire the NEF completion callback.
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="sm_provisioning",
+                subscription_id=subscription_id,
+                sm_slice_id=slice_id,
+                sm_request_id=sm_req_id or None,
+                notification_url=notification_url,
+            )
             asyncio.create_task(
                 poll_sm_request(
                     sm_request_id=sm_req_id,
@@ -507,6 +511,18 @@ class TranslatorService(BaseTranslatorApi):
                     subscription_id=subscription_id,
                 ),
                 name=f"poll-{sm_req_id[:8]}",
+            )
+        else:
+            # SM exposes no /operations endpoint: the synchronous 202
+            # (state="published") is the terminal result we can observe, so the
+            # operation is complete once the SM has accepted the request.
+            self.operation_repo.update_status(
+                operation_id=operation_id,
+                status="completed",
+                subscription_id=subscription_id,
+                sm_slice_id=slice_id,
+                sm_request_id=sm_req_id or None,
+                notification_url=notification_url,
             )
 
         # -- 8. Return -------------------------------------------------------
@@ -574,7 +590,7 @@ class TranslatorService(BaseTranslatorApi):
         sm_req_id = await self._call_sm(
             self.sm_client.change_slice(record.imsi, change_payload), "SM change_slice"
         )
-        if sm_req_id:
+        if settings.sm_polling_enabled and sm_req_id:
             asyncio.create_task(
                 poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
                 name=f"poll-{sm_req_id[:8]}",
@@ -631,7 +647,7 @@ class TranslatorService(BaseTranslatorApi):
             sm_req_id = await self._call_sm(
                 self.sm_client.change_slice(record.imsi, change_payload), "SM change_slice"
             )
-            if sm_req_id:
+            if settings.sm_polling_enabled and sm_req_id:
                 asyncio.create_task(
                     poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
                     name=f"poll-{sm_req_id[:8]}",
@@ -690,7 +706,7 @@ class TranslatorService(BaseTranslatorApi):
                     sm_req_id = await self._call_sm(
                         self.sm_client.delete_slice(slice_id), "SM delete_slice"
                     )
-                    if sm_req_id:
+                    if settings.sm_polling_enabled and sm_req_id:
                         asyncio.create_task(
                             poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
                             name=f"poll-{sm_req_id[:8]}",
@@ -704,7 +720,7 @@ class TranslatorService(BaseTranslatorApi):
             sm_req_id = await self._call_sm(
                 self.sm_client.delete_slice(slice_id), "SM delete_slice"
             )
-            if sm_req_id:
+            if settings.sm_polling_enabled and sm_req_id:
                 asyncio.create_task(
                     poll_sm_request(sm_request_id=sm_req_id, operation_id=""),
                     name=f"poll-{sm_req_id[:8]}",

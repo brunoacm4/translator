@@ -1,7 +1,9 @@
 services:
   nef-translator:
     build:
-      context: ..
+      # Context is the repo root (bolsa_IT) — the shared root .dockerignore
+      # whitelists the worktree sources. From infra/ that is two levels up.
+      context: ../..
       dockerfile: translator-develop/Dockerfile
     image: nef-translator:v0.1.0
     container_name: nef-translator
@@ -9,10 +11,11 @@ services:
     ports:
       - "8081:8081"
     environment:
-      SM_BASE_URL: http://10.16.255.55:8080
-      SM_DEFAULT_COVERAGE_AREA: '["IT"]'
+      SM_BASE_URL: http://10.16.255.55:8000
+      SM_DEFAULT_COVERAGE_AREA: '["it"]'
       SM_TIMEOUT: "30.0"
       SM_HEALTH_TIMEOUT: "5.0"
+      SM_POLLING_ENABLED: "false"
       LOG_LEVEL: INFO
       LOG_JSON: "true"
       CB_FAILURE_THRESHOLD: "5"
