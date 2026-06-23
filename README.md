@@ -56,7 +56,7 @@ Manager — point `SM_BASE_URL` at the sandbox VM (see [`infra/README.md`](infra
 `.venv` is 3.10 and should be recreated).
 
 ```bash
-cd translator-develop
+cd translator
 
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -117,7 +117,7 @@ via environment variables or a `.env` file (`cp .env.example .env`).
 ## Project structure
 
 ```text
-translator-develop/
+translator/
 ├── app/
 │   ├── main.py              FastAPI app, lifespan, middleware wiring
 │   ├── logging_config.py    JSON formatter for Loki ingestion

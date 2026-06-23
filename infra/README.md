@@ -21,7 +21,7 @@ List contexts with `docker context ls`. The translator's `SM_BASE_URL` in
 ## Deploy the translator (VM 10.16.255.53)
 
 ```bash
-cd translator-develop
+cd translator
 docker context use nef-translator-dev-0
 docker compose -f infra/docker-compose.yml up -d --build
 ```
@@ -29,7 +29,7 @@ docker compose -f infra/docker-compose.yml up -d --build
 Notes:
 - The build context is the **repo root** (`bolsa_IT/`), selected via `context: ../..` in the
   compose file, because the shared root `.dockerignore` whitelists the worktree sources
-  (`translator-develop/app`, `translator-develop/pyproject.toml`). Do not move the Dockerfile
+  (`translator/app`, `translator/pyproject.toml`). Do not move the Dockerfile
   COPY paths without updating that whitelist.
 - `container_name` is fixed (`nef-translator`). If a stale container blocks recreation:
   `docker rm -f nef-translator` then re-run `up`.
