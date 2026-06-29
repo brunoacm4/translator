@@ -1,4 +1,4 @@
-# Schemas — API contracts
+# Schemas -  API contracts
 
 Versioned contract for the translator's **northbound** API.
 
