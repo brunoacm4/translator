@@ -1,4 +1,4 @@
-# Infra - deployment & operations
+# Infra -  deployment & operations
 
 Everything needed to build, deploy and smoke-test the translator. The translator runs as a
 single container; the Slice Manager (SM) runs as a separate multi-container stack on its own
@@ -27,10 +27,9 @@ docker compose -f infra/docker-compose.yml up -d --build
 ```
 
 Notes:
-- The build context is the **repo root** (`bolsa_IT/`), selected via `context: ../..` in the
-  compose file, because the shared root `.dockerignore` whitelists the worktree sources
-  (`translator/app`, `translator/pyproject.toml`). Do not move the Dockerfile
-  COPY paths without updating that whitelist.
+- The build is self-contained: `context: ..` (the repository root) plus a versioned
+  `.dockerignore` that keeps the context to `pyproject.toml` + `app/`. A fresh clone builds
+  with the command above regardless of where it is checked out.
 - `container_name` is fixed (`nef-translator`). If a stale container blocks recreation:
   `docker rm -f nef-translator` then re-run `up`.
 - Start from a clean local DB with `docker compose -f infra/docker-compose.yml down -v`

@@ -1,0 +1,6 @@
+# Build context is this repository root. Ignore everything by default and
+# allow only what the Dockerfile needs, keeping the image context minimal.
+**
+
+!pyproject.toml
+!app/**

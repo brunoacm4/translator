@@ -1,10 +1,10 @@
 services:
   nef-translator:
     build:
-      # Context is the repo root (bolsa_IT) — the shared root .dockerignore
-      # whitelists the worktree sources. From infra/ that is two levels up.
-      context: ../..
-      dockerfile: translator/Dockerfile
+      # Context is the repository root (one level up from infra/), with a
+      # versioned .dockerignore — so a fresh clone builds regardless of path.
+      context: ..
+      dockerfile: Dockerfile
     image: nef-translator:v0.1.0
     container_name: nef-translator
     restart: on-failure

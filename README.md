@@ -9,11 +9,11 @@ slicing at the Porto de Aveiro testbed. It keeps local state (SQLite), enforces 
 and tracks slice lifecycle (dedup + reference counting).
 
 > **Documentation map**
-> - This README — overview, API, quick start, configuration.
-> - [`CONSIDERATIONS.md`](CONSIDERATIONS.md) — architecture and design decisions (the *why*).
-> - [`TODO.md`](TODO.md) — roadmap, known limitations, and the handoff checklist.
-> - [`infra/README.md`](infra/README.md) — build, deploy to the VMs, and smoke test.
-> - [`schemas/`](schemas/) — the OpenAPI contract of the northbound API.
+> - This README, overview, API, quick start, configuration.
+> - [`CONSIDERATIONS.md`](CONSIDERATIONS.md), architecture and design decisions (the *why*).
+> - [`TODO.md`](TODO.md), roadmap, known limitations, and the handoff checklist.
+> - [`infra/README.md`](infra/README.md), build, deploy to the VMs, and smoke test.
+> - [`schemas/`](schemas/), the OpenAPI contract of the northbound API.
 
 ---
 
@@ -42,7 +42,7 @@ Base path: `/3gpp-as-session-with-qos/v1` · Interactive docs: `http://<host>:80
 | `PUT`    | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` |
 | `PATCH`  | `/{scsAsId}/subscriptions/{subscriptionId}` | `change_slice` (only when QoS fields changed) |
 | `DELETE` | `/{scsAsId}/subscriptions/{subscriptionId}` | `dissociate_slice` + `delete_slice` (when ref_count=0); idempotent on SM 404 |
-| `GET`    | `/{scsAsId}/operations/{operationId}` *(prefix)* | read operation status from local store |
+| `GET`    | `/operations/{operationId}`                 | read operation status from local store |
 | `GET`    | `/health` | SM reachability + circuit-breaker state + subscription count |
 
 ---
@@ -50,7 +50,7 @@ Base path: `/3gpp-as-session-with-qos/v1` · Interactive docs: `http://<host>:80
 ## Quick start (local)
 
 Set up the project and run the tests locally. The full create flow needs a reachable Slice
-Manager — point `SM_BASE_URL` at the sandbox VM (see [`infra/README.md`](infra/README.md)).
+Manager -  point `SM_BASE_URL` at the sandbox VM (see [`infra/README.md`](infra/README.md)).
 
 **Prerequisites:** Python **3.11** (`pyproject.toml` requires `>=3.11`; the committed
 `.venv` is 3.10 and should be recreated).
@@ -99,11 +99,11 @@ via environment variables or a `.env` file (`cp .env.example .env`).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SM_BASE_URL` | `http://localhost:8080` | Slice Manager control-api URL (testbed sandbox: `http://10.16.255.55:8000`) |
-| `SM_DEFAULT_COVERAGE_AREA` | unset | JSON array passed to `create_slice`, e.g. `["it"]` (lowercase — schema-validated) |
+| `SM_DEFAULT_COVERAGE_AREA` | unset | JSON array passed to `create_slice`, e.g. `["it"]` (lowercase -  schema-validated) |
 | `SM_DEFAULT_RAN` | unset | Optional `ran` identifier for `create_slice` |
 | `SM_TIMEOUT` | `30.0` | SM call timeout (s) |
 | `SM_HEALTH_TIMEOUT` | `5.0` | Health-check SM reachability timeout (s) |
-| `SM_POLLING_ENABLED` | `false` | Async polling of SM `GET /operations/{id}`. Off by default — the SM does not implement that endpoint yet (returns 500); the synchronous `202` is treated as terminal. See [`CONSIDERATIONS.md`](CONSIDERATIONS.md). |
+| `SM_POLLING_ENABLED` | `false` | Async polling of SM `GET /operations/{id}`. Off by default -  the SM does not implement that endpoint yet (returns 500); the synchronous `202` is treated as terminal. See [`CONSIDERATIONS.md`](CONSIDERATIONS.md). |
 | `SM_POLL_INITIAL_INTERVAL` / `SM_POLL_MAX_INTERVAL` / `SM_POLL_TIMEOUT` | `2.0` / `30.0` / `300.0` | Polling backoff + deadline (only used when polling is enabled) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `LOG_JSON` | `true` | `false` for human-readable local output |

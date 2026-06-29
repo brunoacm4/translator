@@ -12,7 +12,7 @@ exposes `/operations`.
 
 ---
 
-## Handoff checklist (first day)
+## Handoff checklist
 
 1. **Prerequisites** - Python 3.11; access to the testbed VPN; the `nef-translator-dev-0` and
    `sandbox` Docker contexts configured (`docker context ls`).
@@ -28,13 +28,16 @@ exposes `/operations`.
 
 ---
 
-## Next steps (translator - we own this)
-
-- **Confirm `qosReference` values** the OneSource NEF actually sends; reconcile with
-  `app/config/qos_profiles.py` (may differ from `qos_ref_1/2/3`).
+## Next steps
+- **QoS profiles → SM catalog** (decided 2026-06-27 by the SM team): the SM will own a fixed
+  set of QoS profiles and expose a discovery endpoint; the NEF selects from that subset.
+  New work — (SM side) build the endpoint; (translator side) fetch the available profiles from
+  it and map `qosReference` to them, replacing the placeholder `app/config/qos_profiles.py`
+  (`qos_ref_1/2/3` are test values). See CONSIDERATIONS.md §4.4. Also remove the dead
+  `default_5qi` field while at it.
 - **Auth** - verify whether the SM/NEF enforce OAuth2 bearer tokens (CAPIF) and add token
   handling to `sm_client` if so.
-- **Re-enable polling** once the SM ships `/operations`: set `SM_POLLING_ENABLED=true` and
+- **Enable polling** once the SM ships `/operations`: set `SM_POLLING_ENABLED=true` and
   validate the NEF completion callback (`notificationDestination`).
 - **Idempotency TTL** - purge stale idempotency keys after a configurable window.
 
@@ -46,19 +49,10 @@ exposes `/operations`.
 
 ---
 
-## Blockers to track (Slice Manager side - not ours to fix)
+## Blockers to track (Slice Manager side)
 
 - **`GET /operations/{request_id}` returns 500** - no `BaseOPSApi` implementation in the SM
   (sandbox or upstream). Blocks async completion tracking; keeps polling disabled.
 - **No-op sandbox read model** - only canned demo data (`sandbox-demo` slice; cells
   151/152/153). `delete_slice` 404s for real slices (handled, see CONSIDERATIONS §4.8); full
   E2E semantics need a non-no-op SM.
-
----
-
-## Git / repo notes
-
-- This restructure was done on `develop`. Commits are handled manually. After committing
-  `develop`, propagate the same changes to `main` (the two are git worktrees of one repo).
-- The old PT architecture doc (`DOCUMENTACAO_TRADUTOR.md`, on the `main` worktree only) is
-  superseded by [`CONSIDERATIONS.md`](CONSIDERATIONS.md) and can be dropped on merge.
