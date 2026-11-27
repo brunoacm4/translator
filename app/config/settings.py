@@ -11,7 +11,7 @@
     from app.config.settings import settings
 
     settings.sm_base_url   # → "http://localhost:8080"
-    settings.sm_timeout    # → 30.0
+    settings.sm_timeout    # → 15.0
 
     Override at runtime:
         SM_BASE_URL=http://192.168.1.10:8080 hypercorn app.main:app
@@ -40,8 +40,12 @@ class Settings(BaseSettings):
         description="Slice Manager HTTP base URL (control-api)",
     )
     sm_timeout: float = Field(
-        default=30.0,
-        description="Timeout in seconds for SM API calls (Selenium takes ~30s)",
+        default=15.0,
+        description=(
+            "Timeout in seconds for SM API calls. With one attempt it keeps the "
+            "answer to the NEF under the NEF's 25 s limit, and it outlasts the "
+            "SM's own 10 s wait for Kafka (CONSIDERATIONS.md §4.6)."
+        ),
     )
     sm_health_timeout: float = Field(
         default=5.0,
@@ -79,10 +83,11 @@ class Settings(BaseSettings):
     # ── Retry ─────────────────────────────────────────────────────────
 
     retry_max_attempts: int = Field(
-        default=2,
+        default=1,
         description=(
             "Total SM call attempts including the first try. "
-            "Set to 1 to disable retries."
+            "1 disables retries (the default): a timed-out POST may already "
+            "have reached the SM, and a retry would not fit the NEF's 25 s limit."
         ),
     )
     retry_min_wait: float = Field(

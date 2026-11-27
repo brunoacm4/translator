@@ -181,7 +181,7 @@ via environment variables or a `.env` file (`cp .env.example .env`).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SM_BASE_URL` | `http://localhost:8080` | Slice Manager control-api URL (testbed sandbox: `http://10.16.255.55:8000`) |
-| `SM_TIMEOUT` | `30.0` | SM call timeout (s) |
+| `SM_TIMEOUT` | `15.0` | SM call timeout (s); keeps answers under the NEF's 25 s limit ([`CONSIDERATIONS.md`](CONSIDERATIONS.md) §4.6) |
 | `SM_HEALTH_TIMEOUT` | `5.0` | Health-check SM reachability timeout (s) |
 | `SM_POLLING_ENABLED` | `true` | Async polling of SM `GET /operations/{id}` until `completed`/`failed`, then NEF callback. Set `false` against an SM older than Sept 2026 (endpoint returns 500); the synchronous `202` is then treated as terminal. See [`CONSIDERATIONS.md`](CONSIDERATIONS.md) §4.7. |
 | `SM_POLL_INITIAL_INTERVAL` / `SM_POLL_MAX_INTERVAL` / `SM_POLL_TIMEOUT` | `2.0` / `30.0` / `300.0` | Polling backoff + deadline (only used when polling is enabled) |
@@ -189,7 +189,7 @@ via environment variables or a `.env` file (`cp .env.example .env`).
 | `LOG_JSON` | `true` | `false` for human-readable local output |
 | `CB_FAILURE_THRESHOLD` | `5` | Failures before the circuit breaker opens |
 | `CB_RECOVERY_TIMEOUT` | `30.0` | Seconds before the breaker probes the SM again |
-| `RETRY_MAX_ATTEMPTS` / `RETRY_MIN_WAIT` / `RETRY_MAX_WAIT` | `2` / `0.5` / `3.0` | SM call retry policy (full-jitter backoff) |
+| `RETRY_MAX_ATTEMPTS` / `RETRY_MIN_WAIT` / `RETRY_MAX_WAIT` | `1` / `0.5` / `3.0` | SM call retry policy (full-jitter backoff); `1` = no retry ([`CONSIDERATIONS.md`](CONSIDERATIONS.md) §4.6) |
 | `TRANSLATOR_DB_PATH` | `./translator.db` | SQLite state file |
 
 ---

@@ -33,7 +33,7 @@
     Configuration
     -------------
     All values are read from ``settings`` (env vars / .env):
-        RETRY_MAX_ATTEMPTS   default 2
+        RETRY_MAX_ATTEMPTS   default 1 (no retry, CONSIDERATIONS.md §4.6)
         RETRY_MIN_WAIT       default 0.5
         RETRY_MAX_WAIT       default 3.0
 """

@@ -161,6 +161,27 @@ network errors) and a **circuit breaker** that, after `CB_FAILURE_THRESHOLD` con
 failures, opens and fails fast with `503` instead of piling up timeouts. The breaker state is
 exposed in `/health`. *(`app/resilience/`.)*
 
+**Time budget toward the NEF (decided by Bruno on 2026-11-27).** The NEF waits at most 25 s
+for the PCF, which is the translator here. Both its northbound and its southbound gateway
+default to `request_timeout` 25 s (NEF chart `templates/northbound-gateway/configmap.yaml:33`,
+`templates/southbound-gateway/configmap.yaml:44`). The translator answers the NEF only after
+the SM's answer, so the SM call has to fit in that time.
+
+- **Settings**: `SM_TIMEOUT=15` and `RETRY_MAX_ATTEMPTS=1`. The worst case is 15 s. Before
+  this it was about 60 s: 30 s × 2 attempts.
+- **Why 15 s**: the SM answers `202` as soon as Kafka confirms the message. It waits at most
+  10 s for that confirmation, then answers with an error (slice-manager
+  `modules/control_api/app/impl/kafka_publish.py:33,69-73`). 15 s waits for the SM's own
+  answer and still leaves margin for the NEF's internal hops.
+- **Why no retry**: after a read timeout the POST may already have reached the SM, so a
+  retry could associate or move the UE twice. A connection blip now fails at once with `502`,
+  and the application can repeat the request.
+- **What happens when the NEF gives up first** (**Inference**): the NEF reports a failure
+  while the translator may still complete the operation. A repeated create for that UE is
+  then refused with `403`, because of one session per UE (ADR 0006).
+- **Possible later step**: a total deadline per request, retrying only errors where the
+  request never left the translator (connection refused). That needs code and an ADR.
+
 ### 4.7 Async polling of SM operations
 After a write, the SM returns `202 + state="published"`: the message reached Kafka, nothing
 has been provisioned yet. Since Sept 2026 the SM exposes `GET /operations/{request_id}`,

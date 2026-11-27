@@ -32,7 +32,7 @@
         result = await sm_circuit_breaker.call(client.post("/core/slice/create", ...))
 
     When OPEN, ``call()`` raises ``CircuitBreakerOpen`` immediately (before any
-    network I/O) so the NEF gets a fast 503 instead of waiting 30 s for a timeout.
+    network I/O) so the NEF gets a fast 503 instead of waiting for the SM timeout.
 
     Configuration
     -------------
