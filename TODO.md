@@ -66,8 +66,9 @@ patch / delete all pass at the HTTP level; DELETE returns `204` (idempotent on S
   the NEF actually sends (create / modify / delete), the h2c mode (prior knowledge, or
   `Upgrade: h2c`, which Hypercorn only honours on requests without a body), the reachable
   address of the southbound gateway (seen 2026-11-21: `sgw` LoadBalancer on 10.255.13.14:8500,
-  configured as `sgw.onemnef.com:8500`, so the translator VM must resolve that name), and how the
-  NEF reacts to the termination request (ADR 0007).
+  configured as `sgw.onemnef.com:8500`; the compose maps that name to 10.255.13.14 since
+  2026-11-27, but that the translator VM reaches it is not checked yet), and how the NEF reacts
+  to the termination request (ADR 0007).
 - **Revisit ADR 0007 options 1-3** (deferred) once real NEF requests are seen. In each case
   Open5GS is more lenient than the translator:
   - no `qosReference`: Open5GS uses a default per media type;

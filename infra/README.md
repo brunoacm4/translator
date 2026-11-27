@@ -31,6 +31,11 @@ Notes:
   `GET /operations` (SM `main`, Sept 2026+). The sandbox VM runs an older build (see below);
   against it, set `SM_POLLING_ENABLED: "false"` or every operation ends `failed` after the
   5-minute polling timeout.
+- The compose maps `sgw.onemnef.com` to `10.255.13.14` (`extra_hosts`). That is the NEF's
+  southbound gateway on NEF-Dev, where the translator sends the N5 termination request
+  ([ADR 0007](../docs/adr/0007-n5-behaves-like-open5gs-pcf.md)). For another address, run
+  `NEF_SGW_IP=<ip> docker compose -f infra/docker-compose.yml up -d`. From the translator VM,
+  `curl -s http://10.255.13.14:8500/health/ready` checks that the SGW is reachable.
 - The build is self-contained: `context: ..` (the repository root) plus a versioned
   `.dockerignore` that keeps the context to `pyproject.toml` + `app/`. A fresh clone builds
   with the command above regardless of where it is checked out.

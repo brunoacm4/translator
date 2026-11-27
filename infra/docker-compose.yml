@@ -27,6 +27,13 @@ services:
       TRANSLATOR_DB_PATH: /data/translator.db
     volumes:
       - translator-data:/data
+    # The NEF is configured with its southbound gateway (SGW) at
+    # sgw.onemnef.com:8500 (Helm value sgw_host) and is expected to use that
+    # name in ascReqData.notifUri. The translator sends the N5 termination
+    # request there (ADR 0007), so the name is mapped to the SGW address on
+    # NEF-Dev here instead of depending on DNS. Override with NEF_SGW_IP.
+    extra_hosts:
+      - "sgw.onemnef.com:${NEF_SGW_IP:-10.255.13.14}"
 
 volumes:
   translator-data:
