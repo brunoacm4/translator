@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,7 +27,8 @@ class OperationStatus(BaseModel):
     status: str
     subscription_id: Optional[str] = Field(default=None, alias="subscriptionId")
     sm_slice_id: Optional[str] = Field(default=None, alias="smSliceId")
-    sm_request_id: Optional[str] = Field(default=None, alias="smRequestId")
+    # Every SM request_id of the operation (associate_slice, or change_slice for a QoS change)
+    sm_request_ids: List[str] = Field(default_factory=list, alias="smRequestIds")
     error: Optional[str] = None
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     updated_at: Optional[str] = Field(default=None, alias="updatedAt")

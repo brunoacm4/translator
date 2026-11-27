@@ -155,28 +155,6 @@ class SliceManagerClient:
 
     # -- SM endpoints --------------------------------------------------------
 
-    async def create_slice(self, payload: Dict[str, Any]) -> str:
-        """
-        POST /core/slices
-
-        Returns:
-            SM ``request_id`` from the 202 response.
-        """
-        return await self._request("POST", "/core/slices", payload)
-
-    async def delete_slice(self, slice_id: str) -> str:
-        """
-        DELETE /core/slices/{slice_id}
-
-        Idempotent: a 404 (slice unknown to the SM) is treated as success.
-
-        Returns:
-            SM ``request_id`` from the 202 response, or "" if already absent.
-        """
-        return await self._request(
-            "DELETE", f"/core/slices/{slice_id}", tolerate_not_found=True
-        )
-
     async def associate_slice(self, ue_id: str, payload: Dict[str, Any]) -> str:
         """
         POST /core/ues/{ue_id}/slice-associations
@@ -205,8 +183,11 @@ class SliceManagerClient:
         """
         PATCH /core/ues/{ue_id}/slice-associations
 
+        Moves the UE to another pre-provisioned slice (docs/adr/0006).
+
         Returns:
-            SM ``request_id`` from the 202 response.
+            SM ``request_id`` from the 202 response (SM ``main`` bfbaf29 and
+            later; older SMs answered 200 without one, giving "").
         """
         return await self._request("PATCH", f"/core/ues/{ue_id}/slice-associations", payload)
 
@@ -221,7 +202,10 @@ class SliceManagerClient:
         Returns:
             Dict with at least ``{"request_id": str, "state": str}``.
             ``state`` is one of ``"pending"``, ``"published"``, ``"processing"``,
-            ``"completed"``, ``"failed"``.
+            ``"completed"``, ``"failed"`` (only the last two are terminal).
+            The SM also returns ``operation``, ``duration_ms`` and a
+            per-worker ``components`` breakdown (``core``/``ran``) whose
+            entries carry an ``error`` when they failed.
 
         Raises:
             httpx.HTTPStatusError  - SM returned 4xx/5xx

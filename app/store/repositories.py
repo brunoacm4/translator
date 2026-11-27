@@ -85,16 +85,50 @@ class SubscriptionRepository:
         ).fetchall()
         return [self._to_dict(r) for r in rows if r is not None]
 
-    def update(self, scs_as_id: str, subscription_id: str, data: Dict[str, Any]) -> bool:
+    def update(
+        self,
+        scs_as_id: str,
+        subscription_id: str,
+        data: Dict[str, Any],
+        sm_slice_id: Optional[str] = None,
+    ) -> bool:
+        """Replace the stored data and, when given, the session's slice."""
         now = _now_iso()
         with transaction() as cur:
             cur.execute(
                 """
                 UPDATE subscriptions
-                SET subscription_data = ?, updated_at = ?
+                SET subscription_data = ?,
+                    sm_slice_id = COALESCE(?, sm_slice_id),
+                    updated_at = ?
                 WHERE scs_as_id = ? AND subscription_id = ?
                 """,
-                (json.dumps(data), now, scs_as_id, subscription_id),
+                (json.dumps(data), sm_slice_id, now, scs_as_id, subscription_id),
+            )
+            return cur.rowcount > 0
+
+    def restore_slice(
+        self,
+        scs_as_id: str,
+        subscription_id: str,
+        *,
+        expected_slice_id: str,
+        previous_slice_id: str,
+    ) -> bool:
+        """Put a session back on ``previous_slice_id`` after a failed QoS change.
+
+        Only applies while the session is still on ``expected_slice_id``, so a
+        later change is never undone.
+        """
+        now = _now_iso()
+        with transaction() as cur:
+            cur.execute(
+                """
+                UPDATE subscriptions
+                SET sm_slice_id = ?, updated_at = ?
+                WHERE scs_as_id = ? AND subscription_id = ? AND sm_slice_id = ?
+                """,
+                (previous_slice_id, now, scs_as_id, subscription_id, expected_slice_id),
             )
             return cur.rowcount > 0
 
@@ -105,6 +139,21 @@ class SubscriptionRepository:
                 (scs_as_id, subscription_id),
             )
             return cur.rowcount > 0
+
+    def get_by_imsi(self, imsi: str) -> Optional[Dict[str, Any]]:
+        """Any session of the UE, in either API (owner)."""
+        conn = get_connection()
+        row = conn.execute(
+            """
+            SELECT scs_as_id, subscription_id, sm_slice_id, imsi, operation_id,
+                   subscription_data, created_at, updated_at
+            FROM subscriptions
+            WHERE imsi = ?
+            LIMIT 1
+            """,
+            (imsi,),
+        ).fetchone()
+        return self._to_dict(row)
 
     def get_by_sm_slice_id(self, sm_slice_id: str) -> Optional[Dict[str, Any]]:
         conn = get_connection()
@@ -182,7 +231,8 @@ class OperationRepository:
             """
             SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
                    status, subscription_id, sm_slice_id, sm_request_id,
-                   notification_url, error, created_at, updated_at
+                   notification_url, error, previous_sm_slice_id,
+                   created_at, updated_at
             FROM operations
             WHERE operation_id = ?
             """,
@@ -200,6 +250,7 @@ class OperationRepository:
         sm_request_id: Optional[str] = None,
         notification_url: Optional[str] = None,
         error: Optional[str] = None,
+        previous_sm_slice_id: Optional[str] = None,
     ) -> bool:
         now = _now_iso()
         with transaction() as cur:
@@ -213,6 +264,7 @@ class OperationRepository:
                     sm_request_id = COALESCE(?, sm_request_id),
                     notification_url = COALESCE(?, notification_url),
                     error = COALESCE(?, error),
+                    previous_sm_slice_id = COALESCE(?, previous_sm_slice_id),
                     updated_at = ?
                 WHERE operation_id = ?
                 """,
@@ -223,6 +275,7 @@ class OperationRepository:
                     sm_request_id,
                     notification_url,
                     error,
+                    previous_sm_slice_id,
                     now,
                     operation_id,
                 ),
@@ -232,14 +285,16 @@ class OperationRepository:
     def get_resumable(self) -> List[Dict[str, Any]]:
         """Return operations in ``sm_provisioning`` state that have a
         ``sm_request_id`` — these need their polling task resumed after
-        a process restart.
+        a process restart. ``sm_request_id`` holds every SM request ID of the
+        operation, comma-separated.
         """
         conn = get_connection()
         rows = conn.execute(
             """
             SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
                    status, subscription_id, sm_slice_id, sm_request_id,
-                   notification_url, error, created_at, updated_at
+                   notification_url, error, previous_sm_slice_id,
+                   created_at, updated_at
             FROM operations
             WHERE status = 'sm_provisioning'
               AND sm_request_id IS NOT NULL
@@ -262,6 +317,7 @@ class OperationRepository:
             "sm_request_id": row["sm_request_id"],
             "notification_url": row["notification_url"],
             "error": row["error"],
+            "previous_sm_slice_id": row["previous_sm_slice_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -344,101 +400,15 @@ class IdempotencyRepository:
                 "sm_slice_id": row["sm_slice_id"],
             }
 
+    def release(self, operation_id: str) -> None:
+        """Forget the key/fingerprint reserved by *operation_id*.
 
-class SliceRegistryRepository:
-    """
-    Tracks which SM slices exist and how many subscriptions reference each one.
-
-    Primary key: (snssai, dnn) — one SM slice per unique SNSSAI+DNN pair.
-    ``ref_count`` is incremented when a UE is associated and decremented on
-    dissociation; when it reaches 0 the slice is deleted from the SM.
-    """
-
-    def get(self, snssai: str, dnn: str) -> Optional[Dict[str, Any]]:
-        conn = get_connection()
-        row = conn.execute(
-            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
-            "WHERE snssai = ? AND dnn = ?",
-            (snssai, dnn),
-        ).fetchone()
-        return self._to_dict(row)
-
-    def get_by_slice_id(self, sm_slice_id: str) -> Optional[Dict[str, Any]]:
-        conn = get_connection()
-        row = conn.execute(
-            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
-            "WHERE sm_slice_id = ?",
-            (sm_slice_id,),
-        ).fetchone()
-        return self._to_dict(row)
-
-    def get_or_create(
-        self, snssai: str, dnn: str, sm_slice_id: str
-    ) -> tuple[Dict[str, Any], bool]:
-        """
-        Atomically return an existing registry entry or insert a new one
-        with ``ref_count=0``.
-
-        Returns:
-            (entry_dict, created) where ``created`` is True when a new row
-            was inserted, False when an existing one was returned.
+        Deduplication only protects a request while its outcome still stands:
+        once the create failed or the subscription was deleted, an identical
+        request (e.g. a camera reconnecting) must create a new subscription.
         """
         with transaction() as cur:
             cur.execute(
-                "INSERT OR IGNORE INTO slice_registry (snssai, dnn, sm_slice_id, ref_count) "
-                "VALUES (?, ?, ?, 0)",
-                (snssai, dnn, sm_slice_id),
+                "DELETE FROM idempotency_keys WHERE operation_id = ?",
+                (operation_id,),
             )
-            created = cur.rowcount > 0
-        row = get_connection().execute(
-            "SELECT snssai, dnn, sm_slice_id, ref_count FROM slice_registry "
-            "WHERE snssai = ? AND dnn = ?",
-            (snssai, dnn),
-        ).fetchone()
-        return self._to_dict(row), created  # type: ignore[return-value]
-
-    def increment_ref(self, snssai: str, dnn: str) -> int:
-        """Increment ref_count and return the new value."""
-        with transaction() as cur:
-            cur.execute(
-                "UPDATE slice_registry SET ref_count = ref_count + 1 "
-                "WHERE snssai = ? AND dnn = ?",
-                (snssai, dnn),
-            )
-        row = get_connection().execute(
-            "SELECT ref_count FROM slice_registry WHERE snssai = ? AND dnn = ?",
-            (snssai, dnn),
-        ).fetchone()
-        return int(row["ref_count"]) if row else 0
-
-    def decrement_ref(self, snssai: str, dnn: str) -> int:
-        """Decrement ref_count (floor 0) and return the new value."""
-        with transaction() as cur:
-            cur.execute(
-                "UPDATE slice_registry SET ref_count = MAX(0, ref_count - 1) "
-                "WHERE snssai = ? AND dnn = ?",
-                (snssai, dnn),
-            )
-        row = get_connection().execute(
-            "SELECT ref_count FROM slice_registry WHERE snssai = ? AND dnn = ?",
-            (snssai, dnn),
-        ).fetchone()
-        return int(row["ref_count"]) if row else 0
-
-    def delete(self, snssai: str, dnn: str) -> None:
-        with transaction() as cur:
-            cur.execute(
-                "DELETE FROM slice_registry WHERE snssai = ? AND dnn = ?",
-                (snssai, dnn),
-            )
-
-    @staticmethod
-    def _to_dict(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        return {
-            "snssai": row["snssai"],
-            "dnn": row["dnn"],
-            "sm_slice_id": row["sm_slice_id"],
-            "ref_count": row["ref_count"],
-        }

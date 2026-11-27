@@ -1,11 +1,11 @@
-# 3GPP TS 29.122 AsSessionWithQoS — Translator northbound API
+# Translator northbound APIs — 3GPP TS 29.122 AsSessionWithQoS and TS 29.514 Npcf_PolicyAuthorization (N5)
 # Generated from the FastAPI app (app.main:app). Do not edit by hand.
 # Regenerate: see schemas/README.md
 openapi: 3.1.0
 info:
   title: 3GPP AsSessionWithQoS Translator
-  description: Middleware that exposes the 3GPP TS 29.122 AsSessionWithQoS API and translates requests
-    into IT Aveiro Slice Manager operations.
+  description: Middleware that exposes the 3GPP TS 29.122 AsSessionWithQoS API and the TS 29.514 Npcf_PolicyAuthorization
+    API (N5), and translates requests into IT Aveiro Slice Manager operations.
   version: 1.0.0
 paths:
   /3gpp-as-session-with-qos/v1/{scsAsId}/subscriptions:
@@ -49,19 +49,30 @@ paths:
         '202':
           description: Duplicate request accepted (existing operation returned)
         '400':
-          description: Bad request — invalid 3GPP payload
+          description: Bad request — invalid 3GPP payload; missing or unknown qosReference; snssai/dnn
+            not matching the profile's slice
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '403':
-          description: Forbidden
+          description: Forbidden — the UE already has a QoS session
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '500':
           description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '503':
           description: Slice Manager unavailable
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
     get:
       tags:
       - AS Session with Required QoS Subscriptions
@@ -84,9 +95,11 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
-          description: Comma-separated UE IP addresses to filter by
+          description: 'UE IP addresses to filter by: a JSON array of IpAddr objects as in TS 29.122,
+            e.g. [{"ipv4Addr":"10.0.0.1"}] (a comma-separated list is also accepted)'
           title: Ip-Addrs
-        description: Comma-separated UE IP addresses to filter by
+        description: 'UE IP addresses to filter by: a JSON array of IpAddr objects as in TS 29.122, e.g.
+          [{"ipv4Addr":"10.0.0.1"}] (a comma-separated list is also accepted)'
       responses:
         '200':
           description: OK
@@ -100,14 +113,16 @@ paths:
                   Get
         '400':
           description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: SCS/AS not found
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
   /3gpp-as-session-with-qos/v1/{scsAsId}/subscriptions/{subscriptionId}:
     get:
       tags:
@@ -141,12 +156,16 @@ paths:
                 $ref: '#/components/schemas/AsSessionWithQoSSubscription'
         '404':
           description: Subscription not found
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     put:
       tags:
       - Individual AS Session with Required QoS Subscription
@@ -188,12 +207,16 @@ paths:
           description: Subscription updated (no content)
         '404':
           description: Subscription not found
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     patch:
       tags:
       - Individual AS Session with Required QoS Subscription
@@ -235,12 +258,16 @@ paths:
           description: Subscription modified (no content)
         '404':
           description: Subscription not found
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
     delete:
       tags:
       - Individual AS Session with Required QoS Subscription
@@ -271,12 +298,16 @@ paths:
           description: Subscription deleted (with notification data)
         '404':
           description: Subscription not found
-        '422':
-          description: Validation Error
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /3gpp-as-session-with-qos/v1/operations/{operationId}:
     get:
       tags:
@@ -302,12 +333,157 @@ paths:
                 $ref: '#/components/schemas/OperationStatus'
         '404':
           description: Operation not found
-        '422':
-          description: Validation Error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /npcf-policyauthorization/v1/app-sessions:
+    post:
+      tags:
+      - Application Sessions (Collection)
+      summary: Creates a new Individual Application Session Context resource
+      description: 'Authorize the session: start it in the core, return it with its Location.'
+      operationId: post_app_sessions_npcf_policyauthorization_v1_app_sessions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppSessionContext-Input'
+              description: Contains the information for the creation the resource
+        required: true
+      responses:
+        '201':
+          description: Successful creation of the resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: '#/components/schemas/AppSessionContext-Output'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — missing, unknown or conflicting qosReference; sliceInfo/dnn not matching
+            the profile's slice; the UE already has a session
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Not found — unknown UE
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Slice Manager error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Slice Manager unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /npcf-policyauthorization/v1/app-sessions/{appSessionId}:
+    patch:
+      tags:
+      - Individual Application Session Context (Document)
+      summary: Modifies an existing Individual Application Session Context
+      description: Apply the merge patch and push QoS changes to the core.
+      operationId: mod_app_session_npcf_policyauthorization_v1_app_sessions__appSessionId__patch
+      parameters:
+      - name: appSessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: String identifying the resource
+          title: Appsessionid
+        description: String identifying the resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppSessionContextUpdateDataPatch'
+              description: Modification of the resource
+      responses:
+        '200':
+          description: Successful modification; the resource is returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppSessionContext-Output'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden — missing, unknown or conflicting qosReference; sliceInfo/dnn not matching
+            the profile's slice
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Application session not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /npcf-policyauthorization/v1/app-sessions/{appSessionId}/delete:
+    post:
+      tags:
+      - Individual Application Session Context (Document)
+      summary: Deletes an existing Individual Application Session Context
+      description: Stop the session in the core and remove the resource.
+      operationId: delete_app_session_npcf_policyauthorization_v1_app_sessions__appSessionId__delete_post
+      parameters:
+      - name: appSessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          description: String identifying the resource
+          title: Appsessionid
+        description: String identifying the resource
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/EventsSubscReqData'
+              - type: 'null'
+              description: Deletion of the resource, req notification (not used yet)
+              title: Body
+      responses:
+        '204':
+          description: The deletion is confirmed without returning additional data
+        '404':
+          description: Application session not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /health:
     get:
       tags:
@@ -325,6 +501,242 @@ paths:
               schema: {}
 components:
   schemas:
+    AfEventNotification:
+      properties:
+        event:
+          type: string
+          title: Event
+      additionalProperties: true
+      type: object
+      required:
+      - event
+      title: AfEventNotification
+      description: One notified event.
+    AfEventSubscription:
+      properties:
+        event:
+          type: string
+          title: Event
+          description: e.g. SUCCESSFUL_RESOURCES_ALLOCATION
+        notifMethod:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notifmethod
+          description: EVENT_DETECTION, ONE_TIME, ...
+      additionalProperties: true
+      type: object
+      required:
+      - event
+      title: AfEventSubscription
+      description: One event the AF subscribes to.
+    AppSessionContext-Input:
+      properties:
+        ascReqData:
+          anyOf:
+          - $ref: '#/components/schemas/AppSessionContextReqData-Input'
+          - type: 'null'
+        ascRespData:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Ascrespdata
+        evsNotif:
+          anyOf:
+          - $ref: '#/components/schemas/EventsNotification'
+          - type: 'null'
+      additionalProperties: true
+      type: object
+      title: AppSessionContext
+      description: An Individual Application Session Context resource.
+    AppSessionContext-Output:
+      properties:
+        ascReqData:
+          anyOf:
+          - $ref: '#/components/schemas/AppSessionContextReqData-Output'
+          - type: 'null'
+        ascRespData:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Ascrespdata
+        evsNotif:
+          anyOf:
+          - $ref: '#/components/schemas/EventsNotification'
+          - type: 'null'
+      additionalProperties: true
+      type: object
+      title: AppSessionContext
+      description: An Individual Application Session Context resource.
+    AppSessionContextReqData-Input:
+      properties:
+        notifUri:
+          type: string
+          title: Notifuri
+          description: Termination requests go to {notifUri}/terminate
+        suppFeat:
+          type: string
+          title: Suppfeat
+          description: Supported features (hex string)
+        ueIpv4:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv4
+        ueIpv6:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv6
+        ueMac:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Uemac
+        dnn:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dnn
+        sliceInfo:
+          anyOf:
+          - $ref: '#/components/schemas/Snssai'
+          - type: 'null'
+        supi:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supi
+        afAppId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Afappid
+        medComponents:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/MediaComponent'
+            type: object
+            minProperties: 1
+          - type: 'null'
+          title: Medcomponents
+          description: Media components keyed by medCompN
+        evSubsc:
+          anyOf:
+          - $ref: '#/components/schemas/EventsSubscReqData'
+          - type: 'null'
+      additionalProperties: true
+      type: object
+      required:
+      - notifUri
+      - suppFeat
+      title: AppSessionContextReqData
+      description: Service requirements of an Individual Application Session Context.
+    AppSessionContextReqData-Output:
+      properties:
+        notifUri:
+          type: string
+          title: Notifuri
+          description: Termination requests go to {notifUri}/terminate
+        suppFeat:
+          type: string
+          title: Suppfeat
+          description: Supported features (hex string)
+        ueIpv4:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv4
+        ueIpv6:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ueipv6
+        ueMac:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Uemac
+        dnn:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dnn
+        sliceInfo:
+          anyOf:
+          - $ref: '#/components/schemas/Snssai'
+          - type: 'null'
+        supi:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Supi
+        afAppId:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Afappid
+        medComponents:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/MediaComponent'
+            type: object
+            minProperties: 1
+          - type: 'null'
+          title: Medcomponents
+          description: Media components keyed by medCompN
+        evSubsc:
+          anyOf:
+          - $ref: '#/components/schemas/EventsSubscReqData'
+          - type: 'null'
+      additionalProperties: true
+      type: object
+      required:
+      - notifUri
+      - suppFeat
+      title: AppSessionContextReqData
+      description: Service requirements of an Individual Application Session Context.
+    AppSessionContextUpdateData:
+      properties:
+        medComponents:
+          anyOf:
+          - additionalProperties:
+              anyOf:
+              - additionalProperties: true
+                type: object
+              - type: 'null'
+            type: object
+          - type: 'null'
+          title: Medcomponents
+        evSubsc:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Evsubsc
+      additionalProperties: true
+      type: object
+      title: AppSessionContextUpdateData
+      description: 'Modifications to ``ascReqData`` (``application/merge-patch+json``).
+
+
+        ``medComponents`` values are ``MediaComponentRm``: a partial component, or
+
+        ``null`` to remove that component. They are applied as a merge patch, so
+
+        they are kept as plain objects here.'
+    AppSessionContextUpdateDataPatch:
+      properties:
+        ascReqData:
+          anyOf:
+          - $ref: '#/components/schemas/AppSessionContextUpdateData'
+          - type: 'null'
+      additionalProperties: true
+      type: object
+      title: AppSessionContextUpdateDataPatch
+      description: PATCH body of an Individual Application Session Context.
     AsSessionWithQoSSubscription:
       properties:
         self:
@@ -612,6 +1024,45 @@ components:
         (``snssai``, ``dnn``, ``ueIpv4Addr``, ``ueIpv6Addr``, ``macAddr``,
 
         ``ipDomain``, ``sponsorInfo``) are excluded per the spec.'
+    EventsNotification:
+      properties:
+        evSubsUri:
+          type: string
+          title: Evsubsuri
+          description: URI of the Events Subscription sub-resource
+        evNotifs:
+          items:
+            $ref: '#/components/schemas/AfEventNotification'
+          type: array
+          minItems: 1
+          title: Evnotifs
+      additionalProperties: true
+      type: object
+      required:
+      - evSubsUri
+      - evNotifs
+      title: EventsNotification
+      description: Notification of matched events, POSTed to {evSubsc.notifUri}/notify.
+    EventsSubscReqData:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/AfEventSubscription'
+          type: array
+          minItems: 1
+          title: Events
+        notifUri:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notifuri
+          description: Notifications go to {notifUri}/notify
+      additionalProperties: true
+      type: object
+      required:
+      - events
+      title: EventsSubscReqData
+      description: Events the AF subscribes to, and where to notify them.
     FlowInfo:
       properties:
         flowId:
@@ -631,15 +1082,54 @@ components:
       - flowId
       title: FlowInfo
       description: Describes one IP data flow that requires QoS.
-    HTTPValidationError:
+    MediaComponent:
       properties:
-        detail:
-          items:
-            $ref: '#/components/schemas/ValidationError'
-          type: array
-          title: Detail
+        medCompN:
+          type: integer
+          title: Medcompn
+          description: Media component number; also the map key
+        qosReference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Qosreference
+          description: Pre-defined QoS information
+        medType:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Medtype
+          description: AUDIO, VIDEO, DATA, ...
+        marBwDl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Marbwdl
+          description: Maximum requested bandwidth DL (BitRate)
+        marBwUl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Marbwul
+          description: Maximum requested bandwidth UL (BitRate)
+        mirBwDl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mirbwdl
+          description: Minimum requested bandwidth DL (BitRate)
+        mirBwUl:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mirbwul
+          description: Minimum requested bandwidth UL (BitRate)
+      additionalProperties: true
       type: object
-      title: HTTPValidationError
+      required:
+      - medCompN
+      title: MediaComponent
+      description: One media component (a value of the ``medComponents`` map).
     OperationAccepted:
       properties:
         operationId:
@@ -677,11 +1167,11 @@ components:
           - type: string
           - type: 'null'
           title: Smsliceid
-        smRequestId:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Smrequestid
+        smRequestIds:
+          items:
+            type: string
+          type: array
+          title: Smrequestids
         error:
           anyOf:
           - type: string
@@ -852,24 +1342,27 @@ components:
       - PLMN_CHG
       title: UserPlaneEvent
       description: User-plane events the SCS/AS can subscribe to.
-    ValidationError:
+    ProblemDetails:
+      type: object
+      description: 3GPP ProblemDetails (TS 29.571), sent as application/problem+json.
       properties:
-        loc:
-          items:
-            anyOf:
-            - type: string
-            - type: integer
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        invalidParams:
           type: array
-          title: Location
-        msg:
-          type: string
-          title: Message
-        type:
-          type: string
-          title: Error Type
+          items:
+            $ref: '#/components/schemas/InvalidParam'
+          minItems: 1
+    InvalidParam:
       type: object
       required:
-      - loc
-      - msg
-      - type
-      title: ValidationError
+      - param
+      properties:
+        param:
+          type: string
+        reason:
+          type: string

@@ -4,7 +4,7 @@ Versioned contract for the translator's **northbound** API.
 
 | File | Description |
 |------|-------------|
-| [`http/openapi.yaml`](http/openapi.yaml) | OpenAPI 3.1 spec of the 3GPP TS 29.122 `AsSessionWithQoS` API the translator exposes at `/3gpp-as-session-with-qos/v1`. |
+| [`http/openapi.yaml`](http/openapi.yaml) | OpenAPI 3.1 spec of both northbound APIs: TS 29.514 `Npcf_PolicyAuthorization` (N5) at `/npcf-policyauthorization/v1`, and TS 29.122 `AsSessionWithQoS` at `/3gpp-as-session-with-qos/v1`. Both `PATCH` bodies are `application/merge-patch+json`, although the generated spec lists `application/json`. |
 
 The translator's **southbound** contract (the Slice Manager REST API it consumes) is owned
 by the SM team and lives in `slice-manager/schemas/http/openapi.yaml`.
@@ -20,10 +20,11 @@ routes or models:
 .venv/bin/python -c "from app.main import app; import json; \
   open('/tmp/openapi.json','w').write(json.dumps(app.openapi(), indent=2))"
 
-# 2. convert JSON -> YAML (any python with PyYAML, e.g. the system one)
+# 2. convert JSON -> YAML (any python with PyYAML, e.g. the system one), keeping the header
 /usr/bin/python3 -c "import json, yaml; \
   spec = json.load(open('/tmp/openapi.json')); \
-  yaml.safe_dump(spec, open('schemas/http/openapi.yaml','w'), sort_keys=False, allow_unicode=True, width=100)"
+  header = ''.join(open('schemas/http/openapi.yaml').readlines()[:3]); \
+  open('schemas/http/openapi.yaml','w').write(header + yaml.safe_dump(spec, sort_keys=False, allow_unicode=True, width=100))"
 ```
 
 Or simply browse the interactive docs while the app runs: `http://<host>:8081/docs` (Swagger

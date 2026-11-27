@@ -72,8 +72,8 @@ async def retry_with_backoff(
     time it is called, because a coroutine can only be awaited once::
 
         await retry_with_backoff(
-            lambda: client.post("/core/slice/create", json=payload),
-            operation_name="create_slice",
+            lambda: client.post("/core/ues/{ue_id}/slice-associations", json=payload),
+            operation_name="associate_slice",
         )
 
     Args:

@@ -4,10 +4,11 @@
     Translator API
 
     Middleware between a 3GPP NEF and the IT Aveiro Slice Manager.
-    Exposes the 3GPP TS 29.122 AsSessionWithQoS northbound API and
-    translates requests into Slice Manager operations.
+    Exposes two northbound APIs over one translation core
+    (docs/adr/0001) and translates requests into Slice Manager operations:
 
-    Base path:  /3gpp-as-session-with-qos/v1
+      TS 29.122 AsSessionWithQoS          /3gpp-as-session-with-qos/v1
+      TS 29.514 Npcf_PolicyAuthorization  /npcf-policyauthorization/v1  (N5: the NEF calls the translator as its PCF)
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.apis.policy_authorization_api import router as PolicyAuthorizationApiRouter
+from app.apis.problem_details import register_problem_handlers
 from app.apis.translator_api import router as TranslatorApiRouter
 from app.config.settings import settings
 from app.impl.sm_client import SliceManagerClient
@@ -56,7 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Resume polling for operations that were in flight when the process was last
     # killed. Only relevant while SM async polling is enabled — see
-    # settings.sm_polling_enabled (the SM has no /operations endpoint yet).
+    # settings.sm_polling_enabled.
     if settings.sm_polling_enabled:
         pending_ops = OperationRepository().get_resumable()
         if pending_ops:
@@ -64,12 +67,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             for op in pending_ops:
                 asyncio.create_task(
                     poll_sm_request(
-                        sm_request_id=op["sm_request_id"],
+                        sm_request_ids=op["sm_request_id"].split(","),
                         operation_id=op["operation_id"],
-                        notification_url=op.get("notification_url"),
-                        subscription_id=op.get("subscription_id"),
                     ),
-                    name=f"poll-resume-{op['sm_request_id'][:8]}",
+                    name=f"poll-resume-{op['operation_id'][:8]}",
                 )
 
     logger.info(
@@ -95,8 +96,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="3GPP AsSessionWithQoS Translator",
     description=(
-        "Middleware that exposes the 3GPP TS 29.122 AsSessionWithQoS API "
-        "and translates requests into IT Aveiro Slice Manager operations."
+        "Middleware that exposes the 3GPP TS 29.122 AsSessionWithQoS API and the "
+        "TS 29.514 Npcf_PolicyAuthorization API (N5), and translates requests into "
+        "IT Aveiro Slice Manager operations."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -105,10 +107,17 @@ app = FastAPI(
 # ── Middleware (order matters: outermost registered = innermost executed) ──
 app.add_middleware(CorrelationIdMiddleware)  # must be first so all logs are tagged
 
+# ── Errors as 3GPP ProblemDetails (application/problem+json) ──────────────
+register_problem_handlers(app)
+
 # ── 3GPP routes ────────────────────────────────────────────────────────
 app.include_router(
     TranslatorApiRouter,
     prefix="/3gpp-as-session-with-qos/v1",
+)
+app.include_router(
+    PolicyAuthorizationApiRouter,
+    prefix="/npcf-policyauthorization/v1",
 )
 
 

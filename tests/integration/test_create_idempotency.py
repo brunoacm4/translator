@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.db.schema import init_db
-from app.impl.sm_client import SliceManagerClient
 from app.main import app
 
 
@@ -15,21 +14,8 @@ REQUEST_BODY = {
 }
 
 
-def test_duplicate_create_with_same_idempotency_key_returns_202(sqlite_db, monkeypatch) -> None:
+def test_duplicate_create_with_same_idempotency_key_returns_202(sqlite_db, fake_sm) -> None:
     init_db()
-
-    calls = {"create": 0, "associate": 0}
-
-    async def _create(self, payload):
-        calls["create"] += 1
-        return ""
-
-    async def _associate(self, ue_id, payload):
-        calls["associate"] += 1
-        return ""
-
-    monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
-    monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
 
     with TestClient(app) as client:
         r1 = client.post(
@@ -47,25 +33,11 @@ def test_duplicate_create_with_same_idempotency_key_returns_202(sqlite_db, monke
         assert r2.status_code == 202
         assert "operationId" in r2.json()
 
-    assert calls["create"] == 1
-    assert calls["associate"] == 1
+    assert len(fake_sm.associate) == 1
 
 
-def test_duplicate_create_without_header_uses_fingerprint(sqlite_db, monkeypatch) -> None:
+def test_duplicate_create_without_header_uses_fingerprint(sqlite_db, fake_sm) -> None:
     init_db()
-
-    calls = {"create": 0, "associate": 0}
-
-    async def _create(self, payload):
-        calls["create"] += 1
-        return ""
-
-    async def _associate(self, ue_id, payload):
-        calls["associate"] += 1
-        return ""
-
-    monkeypatch.setattr(SliceManagerClient, "create_slice", _create)
-    monkeypatch.setattr(SliceManagerClient, "associate_slice", _associate)
 
     with TestClient(app) as client:
         r1 = client.post(
@@ -80,5 +52,4 @@ def test_duplicate_create_without_header_uses_fingerprint(sqlite_db, monkeypatch
         )
         assert r2.status_code == 202
 
-    assert calls["create"] == 1
-    assert calls["associate"] == 1
+    assert len(fake_sm.associate) == 1

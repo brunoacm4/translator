@@ -93,5 +93,5 @@ def configure_logging(log_level: str = "INFO", json_logs: bool = True) -> None:
     logging.root.handlers = [handler]
 
     # Silence overly verbose third-party libraries
-    for lib in ("httpx", "httpcore", "uvicorn.access"):
+    for lib in ("httpx", "httpcore", "hypercorn.access"):
         logging.getLogger(lib).setLevel(logging.WARNING)

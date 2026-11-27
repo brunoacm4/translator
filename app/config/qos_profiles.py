@@ -1,14 +1,20 @@
 # coding: utf-8
 
 """
-QoS Reference Mapping Table
+QoS profile catalog (docs/adr/0005)
 
-Maps 3GPP qos_reference strings to Slice Manager parameters.
-Each profile defines the SST, optional SD, default 5QI, target latency,
-and reliability class expected by the SM's CoreSliceCreatePostRequest.
+Maps each ``qosReference`` the translator accepts to the Slice Manager slice
+that implements it. The SM pre-creates those slices (model B, docs/adr/0004);
+the translator only associates, moves and dissociates UEs.
 
-In production this should be loaded from a YAML/JSON config file or a
-database. For the Porto de Aveiro testbed MVP, a static dict suffices.
+The SM selects the slice by ``slice_id``. It reads the DNN and S-NSSAI from
+the slice itself, but its schema still requires both in the associate and
+move requests, so they are kept here too.
+
+The entries below are PLACEHOLDERS until the SM team sends the list of slices
+it provisions. They share one S-NSSAI and DNN and differ only in the slice
+(the SM calls each one a "DNN QoS template"), which is how the SM models
+several QoS levels for the same service.
 """
 
 from __future__ import annotations
@@ -16,66 +22,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from app.config import testbed_defaults as tb
+
 
 @dataclass(frozen=True)
 class QoSProfile:
-    """Resolved QoS parameters for a given reference."""
+    """One QoS profile: the pre-provisioned SM slice that implements it."""
 
-    sst: int                          # Slice/Service Type (1=eMBB, 2=URLLC, 3=MIoT)
-    sd: Optional[str]                 # Slice Differentiator (hex string, e.g. "000001")
-    default_5qi: int                  # 5G QoS Identifier
-    latency_ms: int                   # Target latency in milliseconds
-    reliability_percent: float        # e.g. 99.9, 99.999
+    slice_id: str             # SM slice identifier ("QoS profile selector")
+    sst: int                  # S-NSSAI of that slice
+    sd: Optional[str]         # 6 hex digits, e.g. "000001"
+    dnn: str                  # DNN of that slice
 
-    # Extended fields used by core_consumer.py for QCI / scheduling logic
-    prioritylabel: int = 0            # 0–100, higher = more priority
-    delaytolerance: str = "NOT_SUPPORTED"  # SUPPORTED / NOT_SUPPORTED
-    dldeterministiccomm: str = "NOT_SUPPORTED"  # SUPPORTED / NOT_SUPPORTED
-    uldeterministiccomm: str = "NOT_SUPPORTED"  # SUPPORTED / NOT_SUPPORTED
-    uemobilitylevel: str = "fully_mobility"  # stationary / nomadic / restricted_mobility / fully_mobility
+    @property
+    def sm_snssai(self) -> str:
+        """S-NSSAI in the SM's notation, e.g. ``1-000001``."""
+        return f"{self.sst}-{self.sd}" if self.sd else str(self.sst)
 
 
-# ── Static mapping table for the Porto de Aveiro testbed ──────────────
+# ── Placeholder catalog (replace with the SM team's slice list) ─────────
 QOS_PROFILES: Dict[str, QoSProfile] = {
-    # eMBB — Enhanced Mobile Broadband
-    "qos_ref_1": QoSProfile(
-        sst=1,
-        sd="000001",
-        default_5qi=9,
-        latency_ms=20,
-        reliability_percent=99.9,
-        prioritylabel=30,
-        delaytolerance="NOT_SUPPORTED",
-        dldeterministiccomm="NOT_SUPPORTED",
-        uldeterministiccomm="NOT_SUPPORTED",
-        uemobilitylevel="fully_mobility",
-    ),
-    # URLLC — Ultra-Reliable Low-Latency Communications
-    "qos_ref_2": QoSProfile(
-        sst=2,
-        sd="000002",
-        default_5qi=7,
-        latency_ms=5,
-        reliability_percent=99.999,
-        prioritylabel=80,
-        delaytolerance="NOT_SUPPORTED",
-        dldeterministiccomm="SUPPORTED",
-        uldeterministiccomm="SUPPORTED",
-        uemobilitylevel="restricted_mobility",
-    ),
-    # MIoT — Massive IoT
-    "qos_ref_3": QoSProfile(
-        sst=3,
-        sd="000003",
-        default_5qi=9,
-        latency_ms=100,
-        reliability_percent=99.0,
-        prioritylabel=10,
-        delaytolerance="SUPPORTED",
-        dldeterministiccomm="NOT_SUPPORTED",
-        uldeterministiccomm="NOT_SUPPORTED",
-        uemobilitylevel="stationary",
-    ),
+    "qos_ref_1": QoSProfile(slice_id="placeholder-slice-1", sst=1, sd="000001", dnn=tb.DEFAULT_DNN),
+    "qos_ref_2": QoSProfile(slice_id="placeholder-slice-2", sst=1, sd="000001", dnn=tb.DEFAULT_DNN),
+    "qos_ref_3": QoSProfile(slice_id="placeholder-slice-3", sst=1, sd="000001", dnn=tb.DEFAULT_DNN),
 }
 
 
@@ -84,7 +53,7 @@ def resolve_qos_profile(qos_reference: str) -> QoSProfile:
     Look up a QoS profile by its 3GPP reference string.
 
     Raises:
-        ValueError: If the reference is not found in the mapping table.
+        ValueError: If the reference is not found in the catalog.
     """
     profile = QOS_PROFILES.get(qos_reference)
     if profile is None:

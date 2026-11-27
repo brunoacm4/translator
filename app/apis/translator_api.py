@@ -19,6 +19,7 @@
 """
 
 import importlib
+import json
 import pkgutil
 from typing import List, Optional, Union
 
@@ -62,17 +63,49 @@ def _impl() -> BaseTranslatorApi:
     return BaseTranslatorApi.subclasses[0]()
 
 
+def _parse_ip_addrs(raw: Optional[str]) -> Optional[List[str]]:
+    """
+    Parse the ``ip-addrs`` query parameter into a list of addresses.
+
+    TS 29.122 encodes it as a JSON array of ``IpAddr`` objects
+    (``[{"ipv4Addr": "10.0.0.1"}]``). Plain strings inside the array and a
+    comma-separated list are accepted too.
+    """
+    if not raw:
+        return None
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError:
+        return [a.strip() for a in raw.split(",") if a.strip()]
+
+    invalid = HTTPException(
+        status_code=400,
+        detail='ip-addrs must be a JSON array of IpAddr objects, e.g. [{"ipv4Addr":"10.0.0.1"}]',
+    )
+    if not isinstance(items, list):
+        raise invalid
+    addrs: List[str] = []
+    for item in items:
+        if isinstance(item, str):
+            addrs.append(item)
+        elif isinstance(item, dict) and (item.get("ipv4Addr") or item.get("ipv6Addr")):
+            addrs.append(item.get("ipv4Addr") or item.get("ipv6Addr"))
+        else:
+            raise invalid
+    return addrs
+
+
 # ---------------------------------------------------------------------------
 # POST /{scsAsId}/subscriptions
-# Creates a new subscription → SM create_slice + associate_slice
+# Creates a new subscription → SM associate_slice (docs/adr/0006)
 # ---------------------------------------------------------------------------
 @router.post(
     "/{scsAsId}/subscriptions",
     responses={
         201: {"description": "Subscription created successfully"},
         202: {"description": "Duplicate request accepted (existing operation returned)"},
-        400: {"description": "Bad request — invalid 3GPP payload"},
-        403: {"description": "Forbidden"},
+        400: {"description": "Bad request — invalid 3GPP payload; missing or unknown qosReference; snssai/dnn not matching the profile's slice"},
+        403: {"description": "Forbidden — the UE already has a QoS session"},
         500: {"description": "Internal server error"},
         503: {"description": "Slice Manager unavailable"},
     },
@@ -137,12 +170,15 @@ async def list_subscriptions(
     ip_addrs: Optional[str] = Query(
         default=None,
         alias="ip-addrs",
-        description="Comma-separated UE IP addresses to filter by",
+        description=(
+            "UE IP addresses to filter by: a JSON array of IpAddr objects as in "
+            'TS 29.122, e.g. [{"ipv4Addr":"10.0.0.1"}] (a comma-separated list '
+            "is also accepted)"
+        ),
     ),
 ) -> List[AsSessionWithQoSSubscription]:
     """Return all active subscriptions, optionally filtered by UE IP."""
-    addrs = [a.strip() for a in ip_addrs.split(",")] if ip_addrs else None
-    return await _impl().list_subscriptions(scsAsId, addrs)
+    return await _impl().list_subscriptions(scsAsId, _parse_ip_addrs(ip_addrs))
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +263,7 @@ async def patch_subscription(
 
 # ---------------------------------------------------------------------------
 # DELETE /{scsAsId}/subscriptions/{subscriptionId}
-# Delete subscription → SM delete_slice
+# Delete subscription → SM dissociate_slice
 # ---------------------------------------------------------------------------
 @router.delete(
     "/{scsAsId}/subscriptions/{subscriptionId}",

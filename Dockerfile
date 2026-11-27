@@ -17,10 +17,12 @@ RUN pip install --no-cache-dir \
         "httpx>=0.27.0" \
         "pydantic>=2.12.5" \
         "pydantic-settings>=2.0.0" \
-        uvicorn==0.13.4
+        hypercorn==0.18.0
 
 RUN mkdir -p /data && chown 10001:10001 /data
 
 USER nonroot
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
+# Hypercorn serves HTTP/1.1 and HTTP/2 cleartext (h2c) on the same port: the
+# NEF calls N5 with HTTP/2 over plain TCP (docs/adr/0002).
+CMD ["hypercorn", "app.main:app", "--bind", "0.0.0.0:8081"]

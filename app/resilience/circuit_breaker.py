@@ -91,7 +91,7 @@ class CircuitBreaker:
     Async-safe circuit breaker.
 
     Thread safety is provided by ``asyncio.Lock``.  This works correctly
-    in the single-threaded uvicorn event loop used in production.
+    in the single-threaded Hypercorn event loop used in production.
     """
 
     def __init__(

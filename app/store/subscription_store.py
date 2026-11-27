@@ -3,7 +3,8 @@
 """
 SQLite-backed Subscription Store
 
-Tracks the mapping between 3GPP subscriptions and SM slice IDs.
+Tracks the mapping between 3GPP sessions (29.122 subscriptions and N5
+application sessions) and the SM slice each UE is on.
 Preserves the previous store interface so service logic remains stable.
 """
 
@@ -93,12 +94,42 @@ class SubscriptionStore:
         scs_as_id: str,
         subscription_id: str,
         data: Dict[str, Any],
+        sm_slice_id: Optional[str] = None,
     ) -> Optional[SubscriptionRecord]:
-        updated = self._repo.update(scs_as_id, subscription_id, data)
+        """Replace the stored data and, when given, the session's slice."""
+        updated = self._repo.update(scs_as_id, subscription_id, data, sm_slice_id)
         if not updated:
             return None
-        logger.info("Store: updated  scs=%s  sub=%s", scs_as_id, subscription_id)
+        logger.info(
+            "Store: updated  scs=%s  sub=%s%s",
+            scs_as_id, subscription_id, f"  slice={sm_slice_id}" if sm_slice_id else "",
+        )
         return self.get(scs_as_id, subscription_id)
+
+    def restore_slice(
+        self,
+        scs_as_id: str,
+        subscription_id: str,
+        *,
+        expected_slice_id: str,
+        previous_slice_id: str,
+    ) -> bool:
+        """Put a session back on its previous slice after a failed QoS change,
+        unless a later change has already moved it elsewhere."""
+        restored = self._repo.restore_slice(
+            scs_as_id, subscription_id,
+            expected_slice_id=expected_slice_id, previous_slice_id=previous_slice_id,
+        )
+        if restored:
+            logger.info(
+                "Store: slice restored  scs=%s  sub=%s  slice=%s",
+                scs_as_id, subscription_id, previous_slice_id,
+            )
+        return restored
+
+    def get_by_imsi(self, imsi: str) -> Optional[SubscriptionRecord]:
+        """Any session of the UE, in either API."""
+        return self._to_record(self._repo.get_by_imsi(imsi))
 
     def delete(self, scs_as_id: str, subscription_id: str) -> Optional[SubscriptionRecord]:
         existing = self.get(scs_as_id, subscription_id)

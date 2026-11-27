@@ -32,12 +32,6 @@ IPV6_TO_IMSI: Dict[str, str] = {
     "fd00::2": "999080100001152",
 }
 
-# Legacy MSISDN map kept for backward compatibility / future use
-MSISDN_TO_IMSI: Dict[str, str] = {
-    "msisdn-351912345678": "999080100001151",
-    "msisdn-351912345679": "999080100001152",
-}
-
 
 def resolve_imsi(
     ue_ipv4: str | None = None,

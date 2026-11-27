@@ -13,9 +13,6 @@ from __future__ import annotations
 
 # ── Associate endpoint required fields ────────────────────────────────
 
-# IPv4 address assigned to the UE on this slice when the NEF doesn't provide one.
-DEFAULT_IPV4: str = "10.0.0.1"
-
 # Aggregate Maximum Bit Rate — uplink (kbps).
 DEFAULT_AMBR_UP: int = 100000
 

@@ -27,6 +27,10 @@ docker compose -f infra/docker-compose.yml up -d --build
 ```
 
 Notes:
+- The compose enables SM polling (`SM_POLLING_ENABLED: "true"`), which needs an SM with
+  `GET /operations` (SM `main`, Sept 2026+). The sandbox VM runs an older build (see below);
+  against it, set `SM_POLLING_ENABLED: "false"` or every operation ends `failed` after the
+  5-minute polling timeout.
 - The build is self-contained: `context: ..` (the repository root) plus a versioned
   `.dockerignore` that keeps the context to `pyproject.toml` + `app/`. A fresh clone builds
   with the command above regardless of where it is checked out.
@@ -51,6 +55,12 @@ The SM lives in the read-only `slice-manager-sandbox` repo. It is a **no-op buil
 the full pipeline (Control API → Kafka → core/RAN workers → gRPC sessions) but the session
 gRPC servers are stubbed (writes acked, reads return canned demo data). Good for exercising
 the translator without touching real hardware.
+
+**It predates the current SM:** the sandbox fork was last updated 2026-06-16, so it has no
+`/operations` endpoint; the translator targets the SM `main` of Nov 2026 (`bfbaf29`). Use it
+with `SM_POLLING_ENABLED=false`, and only to check the HTTP layer. Under model B the
+translator only associates, moves and dissociates UEs on the slices of its profile map; the
+sandbox accepts those writes at the HTTP level whatever the slice.
 
 ```bash
 cd ../slice-manager-sandbox

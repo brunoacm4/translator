@@ -4,28 +4,40 @@
 SM Operation Poller
 ===================
 
-Background coroutine that polls ``GET /operations/{request_id}`` until
-the Slice Manager reports a terminal state (``"completed"``, ``"failed"``,
-or ``"published"`` which the sandbox uses as its terminal accepted state),
-then:
+Background coroutine that polls ``GET /operations/{request_id}`` for every
+Slice Manager write of one translator operation until all of them reach a
+terminal state, then:
 
   1. Updates the local ``operations`` record to ``"completed"`` or ``"failed"``.
-  2. Optionally sends an HTTP callback to the NEF's ``notificationDestination``
-     with the final status.
+  2. After a failed QoS change, puts the session back on its previous slice
+     (docs/adr/0006).
+  3. Notifies the session's application (``app.impl.notifier``): a 3GPP
+     ``UserPlaneNotificationData`` (29.122), or for N5 a termination request
+     after a failed create only, as the Open5GS PCF does (docs/adr/0007).
+
+SM states
+---------
+``pending`` → ``published`` → ``processing`` → ``completed`` / ``failed``.
+Only ``completed`` and ``failed`` are terminal: ``published`` merely means the
+message reached Kafka, before any worker touched the network. The SM
+aggregates per-component progress (``core``, plus ``ran`` for slice
+operations) into the top-level ``state``; on failure the component ``error``
+strings are copied into the local operation record.
+
+The operation completes once every SM request completed, and fails as soon as
+any one of them fails.
 
 Usage
 -----
-Launch immediately after a write operation returns a ``request_id``::
+Launch immediately after the SM writes return their ``request_id``::
 
     import asyncio
     from app.impl.sm_poller import poll_sm_request
 
     asyncio.create_task(
         poll_sm_request(
-            sm_request_id=sm_req_id,
+            sm_request_ids=[associate_req_id],
             operation_id=operation_id,
-            notification_url=body.notificationDestination,
-            subscription_id=subscription_id,
         )
     )
 
@@ -47,147 +59,175 @@ Controlled by three environment variables (see ``settings``):
     SM_POLL_MAX_INTERVAL      (default 30.0 s)
     SM_POLL_TIMEOUT           (default 300.0 s — 5 minutes)
 
-Notification delivery is best-effort: failures are logged but do not
-affect the operation status update.
+Notification delivery is best-effort (see ``app.impl.notifier``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
-
-import httpx
+from typing import Any, Dict, Optional, Sequence
 
 from app.config.settings import settings
+from app.impl.notifier import notify_operation_outcome
 from app.impl.sm_client import SliceManagerClient
 from app.store.repositories import OperationRepository
+from app.store.subscription_store import store
 
 logger = logging.getLogger(__name__)
 
+TERMINAL_STATES = frozenset({"completed", "failed"})
+
 
 async def poll_sm_request(
-    sm_request_id: str,
+    sm_request_ids: Sequence[str],
     operation_id: str,
-    notification_url: Optional[str] = None,
-    subscription_id: Optional[str] = None,
 ) -> None:
     """
-    Poll the SM until *request_id* reaches a terminal state.
+    Poll the SM until every request in *sm_request_ids* is terminal.
 
     Args:
-        sm_request_id:    UUID returned by the SM in its 202 response.
-        operation_id:     Local operation ID used to update the DB record.
-                          Pass an empty string to skip DB updates (e.g. for
-                          update/patch/delete operations not tracked locally).
-        notification_url: URL to POST when the operation reaches a terminal
-                          state.  ``None`` disables the callback.
-        subscription_id:  Included in the callback body so the client can
-                          correlate the notification with its subscription.
+        sm_request_ids:   UUIDs returned by the SM in its 202 responses.
+        operation_id:     Local operation ID used to update the DB record and
+                          to find the subscription to notify. Pass an empty
+                          string for writes not tracked locally (dissociate):
+                          they are polled for logging only.
     """
     sm_client = SliceManagerClient()
-    operation_repo = OperationRepository()
+    outstanding = [r for r in sm_request_ids if r]
 
     interval = settings.sm_poll_initial_interval
     timeout = settings.sm_poll_timeout
     elapsed = 0.0
 
     logger.info(
-        "SM poller started  sm_req=%s  op=%s  timeout=%.0fs",
-        sm_request_id,
+        "SM poller started  sm_reqs=%s  op=%s  timeout=%.0fs",
+        outstanding,
         operation_id,
         timeout,
     )
 
-    while elapsed < timeout:
+    while outstanding and elapsed < timeout:
         await asyncio.sleep(interval)
         elapsed += interval
 
-        state = await _fetch_state(sm_client, sm_request_id, elapsed)
-        if state is None:
-            # Transient error — back off and retry
-            interval = min(interval * 2, settings.sm_poll_max_interval)
-            continue
+        for sm_request_id in list(outstanding):
+            status = await _fetch_status(sm_client, sm_request_id, elapsed)
+            if status is None:
+                # Transient error — retried on the next round
+                continue
 
-        logger.debug(
-            "SM request state  sm_req=%s  state=%s  elapsed=%.0fs",
-            sm_request_id,
-            state,
-            elapsed,
-        )
-
-        if state in ("completed", "published"):
-            if operation_id:
-                operation_repo.update_status(
-                    operation_id=operation_id,
-                    status="completed",
-                )
-            logger.info(
-                "SM provisioning confirmed  sm_req=%s  op=%s  state=%s  elapsed=%.0fs",
+            state = str(status.get("state", ""))
+            logger.debug(
+                "SM request state  sm_req=%s  state=%s  elapsed=%.0fs",
                 sm_request_id,
-                operation_id,
                 state,
                 elapsed,
             )
-            if notification_url:
-                await _send_notification(
-                    notification_url, operation_id, "completed", subscription_id
-                )
-            return
 
-        if state == "failed":
-            if operation_id:
-                operation_repo.update_status(
-                    operation_id=operation_id,
-                    status="failed",
-                    error="SM reported state=failed",
+            if state == "failed":
+                await _finish(
+                    operation_id,
+                    "failed",
+                    error=_failure_reason(sm_request_id, status),
                 )
-            logger.error(
-                "SM provisioning failed  sm_req=%s  op=%s  elapsed=%.0fs",
-                sm_request_id,
-                operation_id,
-                elapsed,
-            )
-            if notification_url:
-                await _send_notification(
-                    notification_url, operation_id, "failed", subscription_id
-                )
-            return
+                return
 
-        # Still pending — back off and continue
+            if state == "completed":
+                outstanding.remove(sm_request_id)
+
+        # Still in flight — back off and continue
         interval = min(interval * 2, settings.sm_poll_max_interval)
+
+    if not outstanding:
+        logger.info(
+            "SM provisioning confirmed  sm_reqs=%s  op=%s  elapsed=%.0fs",
+            list(sm_request_ids),
+            operation_id,
+            elapsed,
+        )
+        await _finish(operation_id, "completed")
+        return
 
     # ── Deadline exceeded ──────────────────────────────────────────────────
     logger.error(
-        "SM poller timed out  sm_req=%s  op=%s  timeout=%.0fs",
-        sm_request_id,
+        "SM poller timed out  sm_reqs=%s  op=%s  timeout=%.0fs",
+        outstanding,
         operation_id,
         timeout,
     )
+    await _finish(
+        operation_id,
+        "failed",
+        error=f"SM polling timeout after {timeout:.0f}s",
+    )
+
+
+async def _finish(
+    operation_id: str,
+    status: str,
+    error: Optional[str] = None,
+) -> None:
+    """Record the terminal status locally, undo a failed QoS change, and
+    notify the application."""
+    if error:
+        logger.error("SM provisioning failed  op=%s  error=%s", operation_id, error)
     if operation_id:
-        operation_repo.update_status(
+        repo = OperationRepository()
+        repo.update_status(
             operation_id=operation_id,
-            status="failed",
-            error=f"SM polling timeout after {timeout:.0f}s",
+            status=status,
+            error=error,
         )
-    if notification_url:
-        await _send_notification(
-            notification_url, operation_id, "failed", subscription_id
+        if status == "failed":
+            _restore_previous_slice(repo.get(operation_id))
+        await notify_operation_outcome(operation_id, succeeded=status == "completed")
+
+
+def _restore_previous_slice(operation: Optional[Dict[str, Any]]) -> None:
+    """After a failed QoS change, put the session back on the slice it left
+    (docs/adr/0006, decision 4). A create has no previous slice: nothing to do."""
+    if not operation or not operation.get("previous_sm_slice_id"):
+        return
+    if not operation.get("subscription_id") or not operation.get("sm_slice_id"):
+        return
+    restored = store.restore_slice(
+        operation["scs_as_id"],
+        operation["subscription_id"],
+        expected_slice_id=operation["sm_slice_id"],
+        previous_slice_id=operation["previous_sm_slice_id"],
+    )
+    if not restored:
+        logger.info(
+            "QoS change failed but the session moved on (or is gone): slice kept  op=%s",
+            operation["operation_id"],
         )
 
 
-async def _fetch_state(
+def _failure_reason(sm_request_id: str, status: Dict[str, Any]) -> str:
+    """Build a readable error from the SM's per-component breakdown."""
+    operation = status.get("operation") or "operation"
+    components = status.get("components") or {}
+    details = [
+        f"{name}: {entry.get('error')}"
+        for name, entry in components.items()
+        if isinstance(entry, dict) and entry.get("state") == "failed" and entry.get("error")
+    ]
+    reason = "; ".join(details) if details else "SM reported state=failed"
+    return f"SM {operation} {sm_request_id} failed: {reason}"
+
+
+async def _fetch_status(
     sm_client: SliceManagerClient,
     sm_request_id: str,
     elapsed: float,
-) -> Optional[str]:
+) -> Optional[Dict[str, Any]]:
     """
-    Call ``GET /core/requests/{id}`` and return the ``state`` string.
+    Call ``GET /operations/{id}`` and return the SM status body.
     Returns ``None`` on any transient error so the poller can back off.
     """
     try:
-        result = await sm_client.get_request_status(sm_request_id)
-        return str(result.get("state", ""))
+        return await sm_client.get_request_status(sm_request_id)
     except Exception as exc:
         logger.warning(
             "SM poll attempt failed  sm_req=%s  elapsed=%.0fs  error=%s",
@@ -196,39 +236,3 @@ async def _fetch_state(
             exc,
         )
         return None
-
-
-async def _send_notification(
-    url: str,
-    operation_id: str,
-    status: str,
-    subscription_id: Optional[str],
-) -> None:
-    """
-    POST the operation outcome to the NEF callback URL.
-
-    Delivery is best-effort: failures are logged but never re-raised so
-    a notification failure never corrupts the operation state.
-    """
-    payload: dict = {"operationId": operation_id, "status": status}
-    if subscription_id:
-        payload["subscriptionId"] = subscription_id
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            logger.info(
-                "Callback delivered  url=%s  op=%s  status=%s  → %d",
-                url,
-                operation_id,
-                status,
-                resp.status_code,
-            )
-    except Exception as exc:
-        logger.warning(
-            "Callback delivery failed (best-effort)  url=%s  op=%s  error=%s",
-            url,
-            operation_id,
-            exc,
-        )

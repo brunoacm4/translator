@@ -68,22 +68,16 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS ix_idempotency_operation_id
             ON idempotency_keys (operation_id);
 
-        CREATE TABLE IF NOT EXISTS slice_registry (
-            snssai TEXT NOT NULL,
-            dnn TEXT NOT NULL,
-            sm_slice_id TEXT NOT NULL,
-            ref_count INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (snssai, dnn)
-        );
-
-        CREATE INDEX IF NOT EXISTS ix_slice_registry_slice_id
-            ON slice_registry (sm_slice_id);
+        CREATE INDEX IF NOT EXISTS ix_subscriptions_imsi
+            ON subscriptions (imsi);
         """
     )
 
     # ── Online migrations (safe ALTER TABLE — silently skips if column exists) ──
     _add_column_if_missing(conn, "operations", "sm_request_id", "TEXT")
     _add_column_if_missing(conn, "operations", "notification_url", "TEXT")
+    # Slice a QoS change moved away from; restored if the change fails (docs/adr/0006)
+    _add_column_if_missing(conn, "operations", "previous_sm_slice_id", "TEXT")
     conn.commit()
 
 

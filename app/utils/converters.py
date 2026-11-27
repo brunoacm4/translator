@@ -10,30 +10,6 @@ import re
 from typing import Optional
 
 
-def mbps_to_kbps(value_mbps: float) -> int:
-    """
-    Convert Megabits per second to Kilobits per second.
-
-    The Slice Manager expects throughput values in KBPS (integer).
-    The 3GPP NEF sends them in Mbps (float).
-
-    Args:
-        value_mbps: Bandwidth in Mbps.
-
-    Returns:
-        Bandwidth in KBPS (rounded to nearest integer).
-
-    Examples:
-        >>> mbps_to_kbps(10.0)
-        10240
-        >>> mbps_to_kbps(50.0)
-        51200
-        >>> mbps_to_kbps(0.5)
-        512
-    """
-    return round(value_mbps * 1024)
-
-
 # ── 3GPP BitRate string parser ─────────────────────────────────────────
 # The 3GPP ``BitRate`` type (TS 29.571) is a string like:
 #   "10 Mbps",  "1 Gbps",  "500 Kbps",  "128000 bps"

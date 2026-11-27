@@ -14,12 +14,13 @@
     settings.sm_timeout    # → 30.0
 
     Override at runtime:
-        SM_BASE_URL=http://192.168.1.10:8080 uvicorn app.main:app
+        SM_BASE_URL=http://192.168.1.10:8080 hypercorn app.main:app
 
     Copy ``.env.example`` to ``.env`` and edit for local development.
 """
 
 from __future__ import annotations
+
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,21 +46,6 @@ class Settings(BaseSettings):
     sm_health_timeout: float = Field(
         default=5.0,
         description="Timeout in seconds for the /health SM reachability check",
-    )
-    sm_default_ran: str | None = Field(
-        default=None,
-        description=(
-            "Optional default RAN identifier forwarded to the Slice Manager "
-            "create_slice payload, for example 'IT' or 'ran1'."
-        ),
-    )
-    sm_default_coverage_area: list[str] | None = Field(
-        default=None,
-        description=(
-            "Optional list of coverage area identifiers forwarded to the Slice "
-            "Manager create_slice payload. The core_worker uses this to resolve "
-            "which RAN to configure, e.g. [\"IT\"]."
-        ),
     )
 
     # ── Logging ───────────────────────────────────────────────────────
@@ -111,14 +97,14 @@ class Settings(BaseSettings):
     # ── SM operation polling ──────────────────────────────────────────
 
     sm_polling_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Master switch for async SM operation polling. The Slice Manager "
-            "does not yet implement GET /operations/{request_id} (returns 500), "
-            "so by default the translator treats the synchronous 202 "
-            "(state='published') as the terminal result and skips polling. "
-            "Set to true once the SM exposes the operations endpoint to "
-            "re-enable background polling and NEF completion callbacks."
+            "Master switch for async SM operation polling. When true, the "
+            "translator polls GET /operations/{request_id} for every SM write "
+            "until it is completed or failed, then fires the NEF completion "
+            "callback. The SM implements that endpoint since Sept 2026; set to "
+            "false against an older SM (it returns 500 there), in which case "
+            "the synchronous 202 is treated as the terminal result."
         ),
     )
     sm_poll_initial_interval: float = Field(
