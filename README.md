@@ -141,7 +141,7 @@ cp .env.example .env          # then set LOG_JSON=false for readable logs
 
 ```bash
 # Tests need no Slice Manager (the SM client is mocked in tests)
-python -m pytest -q          # 90 tests
+python -m pytest -q          # 95 tests
 ```
 
 ```bash
@@ -187,7 +187,7 @@ via environment variables or a `.env` file (`cp .env.example .env`).
 | `SM_POLL_INITIAL_INTERVAL` / `SM_POLL_MAX_INTERVAL` / `SM_POLL_TIMEOUT` | `2.0` / `30.0` / `300.0` | Polling backoff + deadline (only used when polling is enabled) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `LOG_JSON` | `true` | `false` for human-readable local output |
-| `CB_FAILURE_THRESHOLD` | `5` | Failures before the circuit breaker opens |
+| `CB_FAILURE_THRESHOLD` | `5` | Consecutive SM failures (network errors, timeouts, `5xx`; not `4xx`) before the circuit breaker opens |
 | `CB_RECOVERY_TIMEOUT` | `30.0` | Seconds before the breaker probes the SM again |
 | `RETRY_MAX_ATTEMPTS` / `RETRY_MIN_WAIT` / `RETRY_MAX_WAIT` | `1` / `0.5` / `3.0` | SM call retry policy (full-jitter backoff); `1` = no retry ([`CONSIDERATIONS.md`](CONSIDERATIONS.md) §4.6) |
 | `TRANSLATOR_DB_PATH` | `./translator.db` | SQLite state file |

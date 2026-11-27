@@ -20,16 +20,24 @@
                      │                                               ▼
         ┌─────────────────────────────┐                  ┌──────────────────────┐
         │        HALF_OPEN            │ ◄────────────────│         OPEN         │
-        │   (single probe allowed)    │                  │  (fail fast, no SM   │
-        │                             │  probe fails     │      calls made)      │
+        │  (calls go through; the     │                  │  (fail fast, no SM   │
+        │   first outcome decides)    │  probe fails     │      calls made)      │
         └─────────────────────────────┘ ─────────────────►└──────────────────────┘
+
+    What counts as a failure
+    ------------------------
+    The breaker tracks whether the SM is reachable, not whether one request
+    was valid. For the SM (``counts_as_sm_failure``), only network errors,
+    timeouts and ``5xx`` answers count. A ``4xx`` means the SM is up and
+    rejected that request (an unknown slice, for example): it counts as a
+    success, so bad requests cannot open the circuit for good ones.
 
     Usage
     -----
     The module exposes a ready-to-use singleton ``sm_circuit_breaker`` that
     ``SliceManagerClient`` wraps every outbound call with::
 
-        result = await sm_circuit_breaker.call(client.post("/core/slice/create", ...))
+        result = await sm_circuit_breaker.call(client.request("POST", path, json=payload))
 
     When OPEN, ``call()`` raises ``CircuitBreakerOpen`` immediately (before any
     network I/O) so the NEF gets a fast 503 instead of waiting for the SM timeout.
@@ -47,7 +55,9 @@ import asyncio
 import logging
 import time
 from enum import Enum
-from typing import Awaitable, TypeVar
+from typing import Awaitable, Callable, TypeVar
+
+import httpx
 
 from app.config.settings import settings
 
@@ -72,7 +82,7 @@ class CircuitBreakerOpen(Exception):
     """
     Raised when a call is attempted while the circuit is OPEN.
 
-    The caller (``SliceManagerClient._post``) maps this to HTTP 503.
+    The caller (``SessionCore.call_sm``) maps this to HTTP 503.
     """
 
     def __init__(self, name: str) -> None:
@@ -99,10 +109,12 @@ class CircuitBreaker:
         name: str,
         failure_threshold: int,
         recovery_timeout: float,
+        is_failure: Callable[[Exception], bool] = lambda exc: True,
     ) -> None:
         self.name = name
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
+        self._is_failure = is_failure
 
         self._state = CircuitState.CLOSED
         self._failure_count: int = 0
@@ -128,22 +140,31 @@ class CircuitBreaker:
 
         Raises:
             CircuitBreakerOpen: If the circuit is OPEN.
-            Any exception raised by ``coro`` (also recorded as a failure).
+            Any exception raised by ``coro``. It is recorded as a failure only
+            when ``is_failure`` says so, and as a success otherwise.
         """
         async with self._lock:
             self._maybe_transition_to_half_open()
 
             if self._state == CircuitState.OPEN:
+                # The call never runs: close its coroutine, or Python warns
+                # that it was never awaited.
+                close = getattr(coro, "close", None)
+                if close is not None:
+                    close()
                 raise CircuitBreakerOpen(self.name)
 
         # Execute outside the lock so other requests are not blocked
         try:
             result = await coro
-            await self._record_success()
-            return result
-        except Exception:
-            await self._record_failure()
+        except Exception as exc:
+            if self._is_failure(exc):
+                await self._record_failure()
+            else:
+                await self._record_success()
             raise
+        await self._record_success()
+        return result
 
     def status(self) -> dict:
         """Return a dict suitable for inclusion in the /health response."""
@@ -197,6 +218,17 @@ class CircuitBreaker:
                 )
 
 
+def counts_as_sm_failure(exc: Exception) -> bool:
+    """Whether an SM call error means the SM is unreachable or failing.
+
+    Network errors, timeouts and ``5xx`` answers do. A ``4xx`` does not: the
+    SM answered and rejected that one request.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return True
+
+
 # ── Module-level singleton ─────────────────────────────────────────────
 # Shared across all SliceManagerClient instances so the failure count
 # is consistent regardless of how many requests are in flight.
@@ -205,4 +237,5 @@ sm_circuit_breaker = CircuitBreaker(
     name="slice-manager",
     failure_threshold=settings.cb_failure_threshold,
     recovery_timeout=settings.cb_recovery_timeout,
+    is_failure=counts_as_sm_failure,
 )

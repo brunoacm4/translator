@@ -161,6 +161,12 @@ network errors) and a **circuit breaker** that, after `CB_FAILURE_THRESHOLD` con
 failures, opens and fails fast with `503` instead of piling up timeouts. The breaker state is
 exposed in `/health`. *(`app/resilience/`.)*
 
+Only network errors, timeouts and SM `5xx` answers count as failures. An SM `4xx` means the SM
+is up and rejected one request, for example for an unknown slice, so it counts as a success.
+Until 2026-11-27 every error counted, so five rejected requests opened the circuit for all
+requests. While half-open, calls go through and the first outcome closes or reopens the
+circuit.
+
 **Time budget toward the NEF (decided by Bruno on 2026-11-27).** The NEF waits at most 25 s
 for the PCF, which is the translator here. Both its northbound and its southbound gateway
 default to `request_timeout` 25 s (NEF chart `templates/northbound-gateway/configmap.yaml:33`,
