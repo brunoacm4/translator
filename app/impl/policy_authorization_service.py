@@ -200,7 +200,7 @@ class PolicyAuthorizationService:
                 )
                 raise HTTPException(status_code=403, detail=str(exc))
 
-            sm_req_ids = await self.core.start(
+            sm_request_id = await self.core.start(
                 owner=N5_OWNER,
                 session_id=app_session_id,
                 resolved=resolved,
@@ -219,7 +219,7 @@ class PolicyAuthorizationService:
             operation_id=operation_id,
             session_id=app_session_id,
             slice_id=resolved.slice_id,
-            sm_req_ids=sm_req_ids,
+            sm_request_id=sm_request_id,
             notification_url=req.evSubsc.notifUri if req.evSubsc else None,
         )
         return resource_uri, data

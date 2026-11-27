@@ -8,9 +8,9 @@
 
     Why this matters
     ----------------
-    When a single NEF request triggers multiple SM calls (create + associate),
-    all log lines from all involved modules share the same correlation_id,
-    making it trivial to reconstruct what happened in Grafana/Loki:
+    Every log line written for a request, including those of its SM call and
+    of the polling task it starts, shares the same correlation_id, making it
+    trivial to reconstruct what happened in Grafana/Loki:
 
         {job="translator"} | json | correlation_id="abc-123"
 

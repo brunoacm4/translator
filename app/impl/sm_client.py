@@ -10,11 +10,13 @@
     -------------------
     Every outbound call is wrapped with:
 
-    1. **Retry with exponential backoff + jitter** — retries once on transient
-       network failures (timeout, connection refused) before giving up.
-    2. **Circuit breaker** — after ``CB_FAILURE_THRESHOLD`` consecutive failures
-       the circuit opens and subsequent calls fail immediately with HTTP 503,
-       avoiding timeouts piling up during SM maintenance.
+    1. **Retry with exponential backoff + jitter** — retries transient network
+       failures (timeout, connection refused) when ``RETRY_MAX_ATTEMPTS`` is
+       above 1. Off by default (CONSIDERATIONS.md §4.6).
+    2. **Circuit breaker** — after ``CB_FAILURE_THRESHOLD`` consecutive SM
+       failures (network errors, timeouts, ``5xx``) the circuit opens and
+       subsequent calls fail immediately with HTTP 503, avoiding timeouts
+       piling up during SM maintenance.
 
     Singleton connection pool
     -------------------------

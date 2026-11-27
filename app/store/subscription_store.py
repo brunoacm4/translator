@@ -139,10 +139,6 @@ class SubscriptionStore:
             return existing
         return None
 
-    def get_by_sm_slice_id(self, sm_slice_id: str) -> Optional[SubscriptionRecord]:
-        row = self._repo.get_by_sm_slice_id(sm_slice_id)
-        return self._to_record(row)
-
     @property
     def count(self) -> int:
         return self._repo.count()

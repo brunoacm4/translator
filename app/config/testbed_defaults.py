@@ -3,15 +3,16 @@
 """
 Testbed Defaults for the Porto de Aveiro network.
 
-Hardcoded values for fields required by ``UeSliceAssociationCreateRequest``
-that the 3GPP NEF does not provide.  These match the Aveiro testbed
-configuration and will be replaced by dynamic lookup once the full
-infrastructure is connected.
+Hardcoded values the translator sends or uses that the 3GPP requests do not
+provide. They match the Aveiro testbed configuration.
 """
 
 from __future__ import annotations
 
-# ── Associate endpoint required fields ────────────────────────────────
+# ── Associate request (UeSliceAssociationCreateRequest) ────────────────
+# Optional in the SM since main bfbaf29 (only dnn, snssai and slice_id are
+# required). Sending them sets the UE's AMBR; whether to keep doing so belongs
+# to decision D3 (per-request bitrates).
 
 # Aggregate Maximum Bit Rate — uplink (kbps).
 DEFAULT_AMBR_UP: int = 100000
@@ -19,5 +20,5 @@ DEFAULT_AMBR_UP: int = 100000
 # Aggregate Maximum Bit Rate — downlink (kbps).
 DEFAULT_AMBR_DW: int = 100000
 
-# Default DNN (Data Network Name) when the NEF request doesn't specify one.
+# DNN (Data Network Name) of the placeholder QoS profiles (app/config/qos_profiles.py).
 DEFAULT_DNN: str = "internet"

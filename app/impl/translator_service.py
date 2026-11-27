@@ -213,7 +213,7 @@ class TranslatorService(BaseTranslatorApi):
                 )
                 raise HTTPException(status_code=UE_SESSION_EXISTS_STATUS, detail=str(exc))
 
-            sm_req_ids = await self.core.start(
+            sm_request_id = await self.core.start(
                 owner=scs_as_id,
                 session_id=subscription_id,
                 resolved=resolved,
@@ -236,7 +236,7 @@ class TranslatorService(BaseTranslatorApi):
             operation_id=operation_id,
             session_id=subscription_id,
             slice_id=resolved.slice_id,
-            sm_req_ids=sm_req_ids,
+            sm_request_id=sm_request_id,
             notification_url=notification_url,
         )
 
@@ -420,7 +420,7 @@ class TranslatorService(BaseTranslatorApi):
             status=record["status"],
             subscriptionId=record.get("subscription_id"),
             smSliceId=record.get("sm_slice_id"),
-            smRequestIds=[r for r in (record.get("sm_request_id") or "").split(",") if r],
+            smRequestIds=[record["sm_request_id"]] if record.get("sm_request_id") else [],
             error=record.get("error"),
             createdAt=record.get("created_at"),
             updatedAt=record.get("updated_at"),

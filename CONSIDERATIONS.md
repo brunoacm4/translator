@@ -197,10 +197,12 @@ that carries the `error` of a failed worker.
 
 With `SM_POLLING_ENABLED=true` (**default**) the translator polls the SM request of the
 operation (the associate of a create, the move of a QoS change) with exponential backoff.
-Only `completed` and `failed` are terminal. The operation becomes `completed` once all its
-requests completed and `failed` as soon as one fails, copying the component errors into
-`operations.error`. Then the application is notified (§4.13). In-flight operations are
-resumed at startup (`sm_request_id` keeps the comma-separated IDs).
+Only `completed` and `failed` are terminal. The operation takes the SM request's terminal state;
+a failure copies the component errors into `operations.error`. Then the application is
+notified (§4.13). In-flight operations are resumed at startup from `operations.sm_request_id`.
+Each operation has exactly one SM request under model B. The support for several requests per
+operation, a model A leftover (create slice + associate), was removed on 2026-11-27. A
+database from before then is best recreated (`docker compose -f infra/docker-compose.yml down -v`).
 
 PUT/PATCH (and the N5 modify) are tracked the same way since the SM's UE move answers
 `202 + request_id` (SM `main` `bfbaf29`), see §4.9. DELETE requests are polled for logging only

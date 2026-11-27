@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             for op in pending_ops:
                 asyncio.create_task(
                     poll_sm_request(
-                        sm_request_ids=op["sm_request_id"].split(","),
+                        sm_request_id=op["sm_request_id"],
                         operation_id=op["operation_id"],
                     ),
                     name=f"poll-resume-{op['operation_id'][:8]}",

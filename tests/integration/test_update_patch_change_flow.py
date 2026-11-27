@@ -208,7 +208,7 @@ def test_accepted_move_is_tracked_with_the_previous_slice(sqlite_db, fake_sm, mo
 
     assert response.status_code == 200
     (poll,) = polls
-    assert poll["sm_request_ids"] == ["sm-req-change"]
+    assert poll["sm_request_id"] == "sm-req-change"
     operation = OperationRepository().get(poll["operation_id"])
     assert operation["status"] == "sm_provisioning"
     assert operation["subscription_id"] == sub_id

@@ -155,20 +155,6 @@ class SubscriptionRepository:
         ).fetchone()
         return self._to_dict(row)
 
-    def get_by_sm_slice_id(self, sm_slice_id: str) -> Optional[Dict[str, Any]]:
-        conn = get_connection()
-        row = conn.execute(
-            """
-            SELECT scs_as_id, subscription_id, sm_slice_id, imsi, operation_id,
-                   subscription_data, created_at, updated_at
-            FROM subscriptions
-            WHERE sm_slice_id = ?
-            LIMIT 1
-            """,
-            (sm_slice_id,),
-        ).fetchone()
-        return self._to_dict(row)
-
     def count(self) -> int:
         conn = get_connection()
         row = conn.execute("SELECT COUNT(*) AS c FROM subscriptions").fetchone()
@@ -285,8 +271,7 @@ class OperationRepository:
     def get_resumable(self) -> List[Dict[str, Any]]:
         """Return operations in ``sm_provisioning`` state that have a
         ``sm_request_id`` — these need their polling task resumed after
-        a process restart. ``sm_request_id`` holds every SM request ID of the
-        operation, comma-separated.
+        a process restart.
         """
         conn = get_connection()
         rows = conn.execute(

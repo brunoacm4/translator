@@ -141,7 +141,7 @@ cp .env.example .env          # then set LOG_JSON=false for readable logs
 
 ```bash
 # Tests need no Slice Manager (the SM client is mocked in tests)
-python -m pytest -q          # 95 tests
+python -m pytest -q          # 94 tests
 ```
 
 ```bash

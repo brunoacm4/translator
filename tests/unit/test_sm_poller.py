@@ -54,47 +54,29 @@ def test_published_is_not_terminal(sqlite_db, fast_polling, monkeypatch) -> None
         ],
     })
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["req-1"], operation_id="op-1"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="req-1", operation_id="op-1"))
 
     assert repo.get("op-1")["status"] == "completed"
 
 
-def test_completes_only_when_every_request_completed(sqlite_db, fast_polling, monkeypatch) -> None:
-    repo = _new_operation("op-2")
-    _install_sm_states(monkeypatch, {
-        "create": [{"state": "processing"}] * 3 + [{"state": "completed"}],
-        "associate": [{"state": "completed"}],
-    })
-
-    asyncio.run(
-        sm_poller.poll_sm_request(sm_request_ids=["create", "associate"], operation_id="op-2")
-    )
-
-    assert repo.get("op-2")["status"] == "completed"
-
-
-def test_any_failed_request_fails_the_operation(sqlite_db, fast_polling, monkeypatch) -> None:
+def test_failure_records_the_failed_components(sqlite_db, fast_polling, monkeypatch) -> None:
     repo = _new_operation("op-3")
     _install_sm_states(monkeypatch, {
-        "create": [{
+        "assoc": [{"state": "processing"}, {
             "state": "failed",
-            "operation": "create_slice",
+            "operation": "associate_slice",
             "components": {
-                "core": {"state": "completed"},
-                "ran": {"state": "failed", "error": "gNB rejected ADD GNBNETWORKSLICE"},
+                "core": {"state": "failed", "error": "UDM rejected ADD DNNQOSTPL"},
             },
         }],
-        "associate": [{"state": "completed"}],
     })
 
-    asyncio.run(
-        sm_poller.poll_sm_request(sm_request_ids=["create", "associate"], operation_id="op-3")
-    )
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="assoc", operation_id="op-3"))
 
     op = repo.get("op-3")
     assert op["status"] == "failed"
-    assert "create_slice" in op["error"]
-    assert "ran: gNB rejected ADD GNBNETWORKSLICE" in op["error"]
+    assert "associate_slice" in op["error"]
+    assert "core: UDM rejected ADD DNNQOSTPL" in op["error"]
 
 
 def test_timeout_marks_operation_failed(sqlite_db, monkeypatch) -> None:
@@ -104,7 +86,7 @@ def test_timeout_marks_operation_failed(sqlite_db, monkeypatch) -> None:
     repo = _new_operation("op-4")
     _install_sm_states(monkeypatch, {"req-4": [{"state": "processing"}]})
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["req-4"], operation_id="op-4"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="req-4", operation_id="op-4"))
 
     op = repo.get("op-4")
     assert op["status"] == "failed"
@@ -125,8 +107,8 @@ def test_terminal_state_notifies_the_application(sqlite_db, fast_polling, monkey
 
     monkeypatch.setattr(sm_poller, "notify_operation_outcome", _capture)
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["ok"], operation_id="op-5"))
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["ko"], operation_id="op-6"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="ok", operation_id="op-5"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="ko", operation_id="op-6"))
 
     assert notified == [("op-5", True), ("op-6", False)]
 
@@ -172,7 +154,7 @@ def test_failed_change_restores_the_previous_slice(sqlite_db, fast_polling, monk
     _install_sm_states(monkeypatch, {"move": [{"state": "failed", "components": {}}]})
     notified = _no_notifications(monkeypatch)
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["move"], operation_id="op-c1"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="move", operation_id="op-c1"))
 
     assert repo.get("op-c1")["status"] == "failed"
     assert _slice_of_session() == "placeholder-slice-1"
@@ -186,7 +168,7 @@ def test_failed_change_does_not_undo_a_later_change(sqlite_db, fast_polling, mon
     _install_sm_states(monkeypatch, {"move": [{"state": "failed", "components": {}}]})
     _no_notifications(monkeypatch)
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["move"], operation_id="op-c2"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="move", operation_id="op-c2"))
 
     assert _slice_of_session() == "placeholder-slice-3"
 
@@ -198,7 +180,7 @@ def test_completed_change_keeps_the_new_slice(sqlite_db, fast_polling, monkeypat
     _install_sm_states(monkeypatch, {"move": [{"state": "completed"}]})
     notified = _no_notifications(monkeypatch)
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["move"], operation_id="op-c3"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="move", operation_id="op-c3"))
 
     assert _slice_of_session() == "placeholder-slice-2"
     assert notified == [("op-c3", True)]
@@ -214,6 +196,6 @@ def test_failed_create_leaves_the_session_alone(sqlite_db, fast_polling, monkeyp
     _install_sm_states(monkeypatch, {"assoc": [{"state": "failed", "components": {}}]})
     _no_notifications(monkeypatch)
 
-    asyncio.run(sm_poller.poll_sm_request(sm_request_ids=["assoc"], operation_id="op-c4"))
+    asyncio.run(sm_poller.poll_sm_request(sm_request_id="assoc", operation_id="op-c4"))
 
     assert _slice_of_session() == "placeholder-slice-1"

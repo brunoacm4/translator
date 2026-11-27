@@ -27,7 +27,8 @@ class OperationStatus(BaseModel):
     status: str
     subscription_id: Optional[str] = Field(default=None, alias="subscriptionId")
     sm_slice_id: Optional[str] = Field(default=None, alias="smSliceId")
-    # Every SM request_id of the operation (associate_slice, or change_slice for a QoS change)
+    # The SM request_id of the operation (associate_slice, or change_slice for a
+    # QoS change), as a one-item list; empty before the SM answered
     sm_request_ids: List[str] = Field(default_factory=list, alias="smRequestIds")
     error: Optional[str] = None
     created_at: Optional[str] = Field(default=None, alias="createdAt")

@@ -49,9 +49,6 @@ def init_db() -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS ux_subscriptions_scs_sub
             ON subscriptions (scs_as_id, subscription_id);
 
-        CREATE INDEX IF NOT EXISTS ix_subscriptions_sm_slice
-            ON subscriptions (sm_slice_id);
-
         CREATE UNIQUE INDEX IF NOT EXISTS ux_operations_operation_id
             ON operations (operation_id);
 

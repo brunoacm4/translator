@@ -125,9 +125,9 @@ async def create_subscription(
     ),
 ) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
     """
-    Receives a 3GPP AsSessionWithQoSSubscription, translates it into
-    Slice Manager payloads, creates + associates the slice, stores the
-    subscription, and returns the full resource with a Location header.
+    Receives a 3GPP AsSessionWithQoSSubscription, associates the UE with the
+    slice its qosReference selects, stores the subscription, and returns the
+    full resource with a Location header.
     """
     idem_key = extract_idempotency_key(request)
     result = await _impl().create_subscription(scsAsId, body, idem_key)

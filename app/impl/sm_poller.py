@@ -4,9 +4,9 @@
 SM Operation Poller
 ===================
 
-Background coroutine that polls ``GET /operations/{request_id}`` for every
-Slice Manager write of one translator operation until all of them reach a
-terminal state, then:
+Background coroutine that polls ``GET /operations/{request_id}`` for the
+Slice Manager write of one translator operation (an associate, or a move for
+a QoS change) until it reaches a terminal state, then:
 
   1. Updates the local ``operations`` record to ``"completed"`` or ``"failed"``.
   2. After a failed QoS change, puts the session back on its previous slice
@@ -24,21 +24,15 @@ aggregates per-component progress (``core``, plus ``ran`` for slice
 operations) into the top-level ``state``; on failure the component ``error``
 strings are copied into the local operation record.
 
-The operation completes once every SM request completed, and fails as soon as
-any one of them fails.
-
 Usage
 -----
-Launch immediately after the SM writes return their ``request_id``::
+Launch immediately after the SM write returns its ``request_id``::
 
     import asyncio
     from app.impl.sm_poller import poll_sm_request
 
     asyncio.create_task(
-        poll_sm_request(
-            sm_request_ids=[associate_req_id],
-            operation_id=operation_id,
-        )
+        poll_sm_request(sm_request_id=associate_req_id, operation_id=operation_id)
     )
 
 Startup resume
@@ -66,7 +60,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
 from app.config.settings import settings
 from app.impl.notifier import notify_operation_outcome
@@ -79,44 +73,35 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATES = frozenset({"completed", "failed"})
 
 
-async def poll_sm_request(
-    sm_request_ids: Sequence[str],
-    operation_id: str,
-) -> None:
+async def poll_sm_request(sm_request_id: str, operation_id: str) -> None:
     """
-    Poll the SM until every request in *sm_request_ids* is terminal.
+    Poll the SM until *sm_request_id* is terminal.
 
     Args:
-        sm_request_ids:   UUIDs returned by the SM in its 202 responses.
-        operation_id:     Local operation ID used to update the DB record and
-                          to find the subscription to notify. Pass an empty
-                          string for writes not tracked locally (dissociate):
-                          they are polled for logging only.
+        sm_request_id:  UUID returned by the SM in its 202 response.
+        operation_id:   Local operation ID used to update the DB record and
+                        to find the subscription to notify. Pass an empty
+                        string for a write not tracked locally (dissociate):
+                        it is polled for logging only.
     """
     sm_client = SliceManagerClient()
-    outstanding = [r for r in sm_request_ids if r]
-
     interval = settings.sm_poll_initial_interval
     timeout = settings.sm_poll_timeout
     elapsed = 0.0
 
     logger.info(
-        "SM poller started  sm_reqs=%s  op=%s  timeout=%.0fs",
-        outstanding,
+        "SM poller started  sm_req=%s  op=%s  timeout=%.0fs",
+        sm_request_id,
         operation_id,
         timeout,
     )
 
-    while outstanding and elapsed < timeout:
+    while elapsed < timeout:
         await asyncio.sleep(interval)
         elapsed += interval
 
-        for sm_request_id in list(outstanding):
-            status = await _fetch_status(sm_client, sm_request_id, elapsed)
-            if status is None:
-                # Transient error — retried on the next round
-                continue
-
+        status = await _fetch_status(sm_client, sm_request_id, elapsed)
+        if status is not None:  # None: transient error, retried on the next round
             state = str(status.get("state", ""))
             logger.debug(
                 "SM request state  sm_req=%s  state=%s  elapsed=%.0fs",
@@ -124,6 +109,16 @@ async def poll_sm_request(
                 state,
                 elapsed,
             )
+
+            if state == "completed":
+                logger.info(
+                    "SM provisioning confirmed  sm_req=%s  op=%s  elapsed=%.0fs",
+                    sm_request_id,
+                    operation_id,
+                    elapsed,
+                )
+                await _finish(operation_id, "completed")
+                return
 
             if state == "failed":
                 await _finish(
@@ -133,26 +128,13 @@ async def poll_sm_request(
                 )
                 return
 
-            if state == "completed":
-                outstanding.remove(sm_request_id)
-
         # Still in flight — back off and continue
         interval = min(interval * 2, settings.sm_poll_max_interval)
 
-    if not outstanding:
-        logger.info(
-            "SM provisioning confirmed  sm_reqs=%s  op=%s  elapsed=%.0fs",
-            list(sm_request_ids),
-            operation_id,
-            elapsed,
-        )
-        await _finish(operation_id, "completed")
-        return
-
     # ── Deadline exceeded ──────────────────────────────────────────────────
     logger.error(
-        "SM poller timed out  sm_reqs=%s  op=%s  timeout=%.0fs",
-        outstanding,
+        "SM poller timed out  sm_req=%s  op=%s  timeout=%.0fs",
+        sm_request_id,
         operation_id,
         timeout,
     )

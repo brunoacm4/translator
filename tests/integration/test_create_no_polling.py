@@ -81,5 +81,5 @@ def test_create_with_polling_tracks_the_associate(sqlite_db, fake_sm, monkeypatc
     assert op["status"] == "sm_provisioning"
     assert op["smRequestIds"] == ["sm-req-associate"]
     assert len(poll_calls) == 1
-    assert poll_calls[0]["sm_request_ids"] == ["sm-req-associate"]
+    assert poll_calls[0]["sm_request_id"] == "sm-req-associate"
     assert poll_calls[0]["operation_id"] == op["operationId"]

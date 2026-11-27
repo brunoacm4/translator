@@ -34,7 +34,7 @@ class BaseTranslatorApi:
         body: AsSessionWithQoSSubscription,
         idempotency_key: Optional[str] = None,
     ) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
-        """POST /{scsAsId}/subscriptions → SM create + associate."""
+        """POST /{scsAsId}/subscriptions → SM associate."""
         ...
 
     async def list_subscriptions(
@@ -76,7 +76,7 @@ class BaseTranslatorApi:
         scs_as_id: str,
         subscription_id: str,
     ) -> None:
-        """DELETE /{scsAsId}/subscriptions/{subscriptionId} → SM delete."""
+        """DELETE /{scsAsId}/subscriptions/{subscriptionId} → SM dissociate."""
         ...
 
     async def get_operation(self, operation_id: str) -> OperationStatus:

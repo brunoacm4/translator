@@ -191,16 +191,15 @@ class SessionCore:
             raise HTTPException(status_code=502, detail=f"{description} failed: {exc}")
 
     @staticmethod
-    def poll_untracked(sm_req_ids: List[str]) -> None:
-        """Follow SM writes that have no local operation record (log only).
+    def poll_untracked(sm_request_id: str) -> None:
+        """Follow an SM write that has no local operation record (log only).
 
-        Empty IDs are skipped (e.g. a tolerated 404 on dissociate).
+        An empty ID is skipped (e.g. a tolerated 404 on dissociate).
         """
-        ids = [r for r in sm_req_ids if r]
-        if settings.sm_polling_enabled and ids:
+        if settings.sm_polling_enabled and sm_request_id:
             asyncio.create_task(
-                poll_sm_request(sm_request_ids=ids, operation_id=""),
-                name=f"poll-{ids[0][:8]}",
+                poll_sm_request(sm_request_id=sm_request_id, operation_id=""),
+                name=f"poll-{sm_request_id[:8]}",
             )
 
     # ================================================================== #
@@ -251,14 +250,14 @@ class SessionCore:
         resolved: ResolvedQos,
         imsi: str,
         operation_id: str,
-    ) -> List[str]:
+    ) -> str:
         """
         Associate the UE with the pre-provisioned slice of its profile.
 
         The operation record is marked failed if the SM rejects the call.
 
         Returns:
-            The SM request IDs of the write (empty if the SM returned none).
+            The SM request ID of the associate ("" if the SM returned none).
         """
         slice_id = resolved.slice_id
         logger.info(
@@ -281,7 +280,7 @@ class SessionCore:
                 sm_slice_id=slice_id, error=str(exc.detail),
             )
             raise
-        return [sm_req_id] if sm_req_id else []
+        return sm_req_id
 
     # ================================================================== #
     #  track — record the outcome of an SM write                          #
@@ -293,7 +292,7 @@ class SessionCore:
         operation_id: str,
         session_id: str,
         slice_id: str,
-        sm_req_ids: List[str],
+        sm_request_id: str,
         notification_url: Optional[str],
         previous_slice_id: Optional[str] = None,
     ) -> None:
@@ -302,9 +301,9 @@ class SessionCore:
         ``previous_slice_id`` marks a QoS change: if the SM reports it failed,
         the poller puts the session back on that slice.
         """
-        sm_request_id_col = ",".join(sm_req_ids) or None
+        sm_request_id_col = sm_request_id or None
 
-        if settings.sm_polling_enabled and sm_req_ids:
+        if settings.sm_polling_enabled and sm_request_id:
             # Async tracking: mark provisioning and poll SM /operations until
             # every SM request is terminal, then notify the application.
             self.operation_repo.update_status(
@@ -317,13 +316,13 @@ class SessionCore:
                 previous_sm_slice_id=previous_slice_id,
             )
             asyncio.create_task(
-                poll_sm_request(sm_request_ids=sm_req_ids, operation_id=operation_id),
+                poll_sm_request(sm_request_id=sm_request_id, operation_id=operation_id),
                 name=f"poll-{operation_id[:8]}",
             )
         else:
             # Polling disabled (older SM without /operations): the synchronous
             # 202 (state="published") is the terminal result we can observe, so
-            # the operation is complete once the SM has accepted the requests.
+            # the operation is complete once the SM has accepted the request.
             self.operation_repo.update_status(
                 operation_id=operation_id,
                 status="completed",
@@ -400,7 +399,7 @@ class SessionCore:
             operation_id=operation_id,
             session_id=session_id,
             slice_id=target,
-            sm_req_ids=[sm_req_id] if sm_req_id else [],
+            sm_request_id=sm_req_id,
             notification_url=notification_url,
             previous_slice_id=current_slice_id,
         )
@@ -426,4 +425,4 @@ class SessionCore:
         except HTTPException as exc:
             logger.warning("SM dissociate_slice failed (continuing): %s", exc.detail)
             return
-        self.poll_untracked([sm_req_id])
+        self.poll_untracked(sm_req_id)
