@@ -3,10 +3,7 @@
 """
     Translator Service — TS 29.122 AsSessionWithQoS
 
-    Concrete implementation of ``BaseTranslatorApi``.  Auto-registered at
-    import time via ``__init_subclass__``.
-
-    Maps 3GPP TS 29.122 AsSessionWithQoS subscription operations onto the
+    Called by the 29.122 router (``app.apis.translator_api``). Maps 3GPP TS 29.122 AsSessionWithQoS subscription operations onto the
     translation core (``app.impl.session_core``), which drives the Slice
     Manager (model B: the SM pre-creates the slices, docs/adr/0004):
 
@@ -29,7 +26,6 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.apis.translator_api_base import BaseTranslatorApi
 from app.impl.session_core import (
     QosIntent,
     SessionCore,
@@ -41,7 +37,7 @@ from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
-from app.models.operation import OperationAccepted
+from app.models.operation import OperationAccepted, OperationStatus
 from app.store.subscription_store import store
 
 # Config & utils
@@ -57,7 +53,7 @@ logger = logging.getLogger(__name__)
 UE_SESSION_EXISTS_STATUS = 403
 
 
-class TranslatorService(BaseTranslatorApi):
+class TranslatorService:
     """
     Translates 3GPP TS 29.122 subscriptions into translation-core sessions.
     """
@@ -387,10 +383,8 @@ class TranslatorService(BaseTranslatorApi):
     # ------------------------------------------------------------------ #
     #  GET /operations/{operationId}                                      #
     # ------------------------------------------------------------------ #
-    async def get_operation(self, operation_id: str) -> "OperationStatus":
+    async def get_operation(self, operation_id: str) -> OperationStatus:
         """Return the current status of a previously submitted operation."""
-        from app.models.operation import OperationStatus  # local import avoids circular
-
         record = self.operation_repo.get(operation_id)
         if not record:
             raise HTTPException(status_code=404, detail="Operation not found")

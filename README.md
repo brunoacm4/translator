@@ -201,7 +201,7 @@ translator/
 ├── app/
 │   ├── main.py              FastAPI app, lifespan, middleware wiring
 │   ├── logging_config.py    JSON formatter for Loki ingestion
-│   ├── apis/                3GPP route handlers (29.122, N5) + auto-registering base class
+│   ├── apis/                3GPP route handlers (29.122, N5) + ProblemDetails errors
 │   ├── impl/                session_core (shared core), translator_service (29.122),
 │   │                        policy_authorization_service (N5), sm_client, sm_poller, notifier
 │   ├── models/nef/          TS 29.122 types (Snssai, TscQosRequirement, Subscription)

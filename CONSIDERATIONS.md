@@ -50,9 +50,10 @@ fork was last updated 2026-06-16 and predates `/operations` (§4.7).
 | Resilience | `app/resilience/` | Retry-with-backoff and circuit breaker |
 | Observability | `app/middleware/`, `app/logging_config.py` | Correlation-ID propagation, structured JSON logs |
 
-Routes are decoupled from the implementation by **auto-registration**: any `BaseTranslatorApi`
-subclass registers itself on import (`pkgutil`/`importlib`), so the router resolves the
-implementation without a hard import.
+Each router calls its service directly: `TranslatorService` for 29.122,
+`PolicyAuthorizationService` for N5. The 29.122 router used to find its service through an
+auto-registering base class and a scan of `app/impl` (code generator scaffolding). With a
+single implementation that added nothing, and it was removed on 2026-11-27.
 
 ---
 

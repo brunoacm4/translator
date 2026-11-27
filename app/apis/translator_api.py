@@ -14,13 +14,10 @@
       DELETE /{scsAsId}/subscriptions/{subscriptionId} → delete
       GET    /operations/{operationId}                 → poll async op
 
-    Each handler delegates to the registered BaseTranslatorApi implementation.
-    Subclass discovery happens automatically via pkgutil/importlib.
+    Each handler delegates to ``TranslatorService``.
 """
 
-import importlib
 import json
-import pkgutil
 from typing import List, Optional, Union
 
 from fastapi import (
@@ -34,9 +31,7 @@ from fastapi import (
     status,
 )
 
-from app.apis.translator_api_base import BaseTranslatorApi
-import app.impl
-
+from app.impl.translator_service import TranslatorService
 from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
@@ -46,21 +41,6 @@ from app.utils.idempotency import extract_idempotency_key
 
 
 router = APIRouter()
-
-# ---------------------------------------------------------------------------
-# Auto-discover all implementation modules under app.impl so that any
-# BaseTranslatorApi subclass is registered before the first request arrives.
-# ---------------------------------------------------------------------------
-ns_pkg = app.impl
-for _, name, _ in pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + "."):
-    importlib.import_module(name)
-
-
-def _impl() -> BaseTranslatorApi:
-    """Return the first registered implementation, or raise 500."""
-    if not BaseTranslatorApi.subclasses:
-        raise HTTPException(status_code=500, detail="No implementation registered")
-    return BaseTranslatorApi.subclasses[0]()
 
 
 def _parse_ip_addrs(raw: Optional[str]) -> Optional[List[str]]:
@@ -130,7 +110,7 @@ async def create_subscription(
     full resource with a Location header.
     """
     idem_key = extract_idempotency_key(request)
-    result = await _impl().create_subscription(scsAsId, body, idem_key)
+    result = await TranslatorService().create_subscription(scsAsId, body, idem_key)
 
     if isinstance(result, OperationAccepted):
         response.status_code = status.HTTP_202_ACCEPTED
@@ -171,7 +151,7 @@ async def list_subscriptions(
     ),
 ) -> List[AsSessionWithQoSSubscription]:
     """Return all active subscriptions, optionally filtered by UE IP."""
-    return await _impl().list_subscriptions(scsAsId, _parse_ip_addrs(ip_addrs))
+    return await TranslatorService().list_subscriptions(scsAsId, _parse_ip_addrs(ip_addrs))
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +175,7 @@ async def get_subscription(
     subscriptionId: str = Path(..., description="Identifier of the subscription"),
 ) -> AsSessionWithQoSSubscription:
     """Return one subscription resource."""
-    return await _impl().get_subscription(scsAsId, subscriptionId)
+    return await TranslatorService().get_subscription(scsAsId, subscriptionId)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +203,7 @@ async def update_subscription(
     ),
 ) -> AsSessionWithQoSSubscription:
     """Replace the entire subscription resource and push changes to the SM."""
-    return await _impl().update_subscription(scsAsId, subscriptionId, body)
+    return await TranslatorService().update_subscription(scsAsId, subscriptionId, body)
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +231,7 @@ async def patch_subscription(
     ),
 ) -> AsSessionWithQoSSubscription:
     """Partially update the subscription and push changes to the SM."""
-    return await _impl().patch_subscription(scsAsId, subscriptionId, body)
+    return await TranslatorService().patch_subscription(scsAsId, subscriptionId, body)
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +254,7 @@ async def delete_subscription(
     subscriptionId: str = Path(..., description="Identifier of the subscription"),
 ) -> Response:
     """Delete the subscription and release SM slice resources."""
-    await _impl().delete_subscription(scsAsId, subscriptionId)
+    await TranslatorService().delete_subscription(scsAsId, subscriptionId)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -298,4 +278,4 @@ async def get_operation(
     operationId: str = Path(..., description="Operation ID returned by the create endpoint"),
 ) -> OperationStatus:
     """Return the current status of a previously submitted operation."""
-    return await _impl().get_operation(operationId)
+    return await TranslatorService().get_operation(operationId)
