@@ -177,51 +177,31 @@ class SubscriptionRepository:
 
 
 class OperationRepository:
-    def create(
-        self,
-        *,
-        operation_id: str,
-        scs_as_id: str,
-        idempotency_key: Optional[str],
-        payload_fingerprint: str,
-        status: str,
-    ) -> None:
+    """One row per SM write the translator tracks: a create or a QoS change.
+
+    Idempotency of 29.122 creates is kept apart, in ``IdempotencyRepository``.
+    """
+
+    _COLUMNS = (
+        "operation_id, scs_as_id, status, subscription_id, sm_slice_id, "
+        "sm_request_id, previous_sm_slice_id, error, created_at, updated_at"
+    )
+
+    def create(self, *, operation_id: str, scs_as_id: str, status: str) -> None:
         now = _now_iso()
         with transaction() as cur:
             cur.execute(
                 """
-                INSERT INTO operations (
-                    operation_id,
-                    scs_as_id,
-                    idempotency_key,
-                    payload_fingerprint,
-                    status,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO operations (operation_id, scs_as_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (
-                    operation_id,
-                    scs_as_id,
-                    idempotency_key,
-                    payload_fingerprint,
-                    status,
-                    now,
-                    now,
-                ),
+                (operation_id, scs_as_id, status, now, now),
             )
 
     def get(self, operation_id: str) -> Optional[Dict[str, Any]]:
         conn = get_connection()
         row = conn.execute(
-            """
-            SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
-                   status, subscription_id, sm_slice_id, sm_request_id,
-                   notification_url, error, previous_sm_slice_id,
-                   created_at, updated_at
-            FROM operations
-            WHERE operation_id = ?
-            """,
+            f"SELECT {self._COLUMNS} FROM operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
         return self._to_dict(row)
@@ -234,7 +214,6 @@ class OperationRepository:
         subscription_id: Optional[str] = None,
         sm_slice_id: Optional[str] = None,
         sm_request_id: Optional[str] = None,
-        notification_url: Optional[str] = None,
         error: Optional[str] = None,
         previous_sm_slice_id: Optional[str] = None,
     ) -> bool:
@@ -248,7 +227,6 @@ class OperationRepository:
                     subscription_id = COALESCE(?, subscription_id),
                     sm_slice_id = COALESCE(?, sm_slice_id),
                     sm_request_id = COALESCE(?, sm_request_id),
-                    notification_url = COALESCE(?, notification_url),
                     error = COALESCE(?, error),
                     previous_sm_slice_id = COALESCE(?, previous_sm_slice_id),
                     updated_at = ?
@@ -259,7 +237,6 @@ class OperationRepository:
                     subscription_id,
                     sm_slice_id,
                     sm_request_id,
-                    notification_url,
                     error,
                     previous_sm_slice_id,
                     now,
@@ -275,11 +252,8 @@ class OperationRepository:
         """
         conn = get_connection()
         rows = conn.execute(
-            """
-            SELECT operation_id, scs_as_id, idempotency_key, payload_fingerprint,
-                   status, subscription_id, sm_slice_id, sm_request_id,
-                   notification_url, error, previous_sm_slice_id,
-                   created_at, updated_at
+            f"""
+            SELECT {self._COLUMNS}
             FROM operations
             WHERE status = 'sm_provisioning'
               AND sm_request_id IS NOT NULL
@@ -289,23 +263,7 @@ class OperationRepository:
 
     @staticmethod
     def _to_dict(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        return {
-            "operation_id": row["operation_id"],
-            "scs_as_id": row["scs_as_id"],
-            "idempotency_key": row["idempotency_key"],
-            "payload_fingerprint": row["payload_fingerprint"],
-            "status": row["status"],
-            "subscription_id": row["subscription_id"],
-            "sm_slice_id": row["sm_slice_id"],
-            "sm_request_id": row["sm_request_id"],
-            "notification_url": row["notification_url"],
-            "error": row["error"],
-            "previous_sm_slice_id": row["previous_sm_slice_id"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
+        return dict(row) if row is not None else None
 
 
 class IdempotencyRepository:

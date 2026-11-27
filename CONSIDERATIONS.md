@@ -201,8 +201,7 @@ Only `completed` and `failed` are terminal. The operation takes the SM request's
 a failure copies the component errors into `operations.error`. Then the application is
 notified (§4.13). In-flight operations are resumed at startup from `operations.sm_request_id`.
 Each operation has exactly one SM request under model B. The support for several requests per
-operation, a model A leftover (create slice + associate), was removed on 2026-11-27. A
-database from before then is best recreated (`docker compose -f infra/docker-compose.yml down -v`).
+operation, a model A leftover (create slice + associate), was removed on 2026-11-27.
 
 PUT/PATCH (and the N5 modify) are tracked the same way since the SM's UE move answers
 `202 + request_id` (SM `main` `bfbaf29`), see §4.9. DELETE requests are polled for logging only
@@ -315,12 +314,18 @@ pending ──► published ──► sm_provisioning ──► completed / fail
 | Table | Key | Purpose |
 |-------|-----|---------|
 | `subscriptions` | (`scs_as_id`, `subscription_id`) | 29.122 subscriptions and N5 sessions (owner `#npcf-policyauthorization`) + slice & IMSI; indexed by IMSI for the one-per-UE rule |
-| `operations` | `operation_id` | Per-operation async tracking and status; `previous_sm_slice_id` for QoS changes |
-| `idempotency_keys` | (`scs_as_id`, `payload_fingerprint`) | Deduplication of repeated requests |
+| `operations` | `operation_id` | One row per tracked SM write (a create or a QoS change): status, slice, SM `request_id`, error; `previous_sm_slice_id` for QoS changes |
+| `idempotency_keys` | (`scs_as_id`, `payload_fingerprint`) | Deduplication of repeated 29.122 creates |
 
-Online, safe migrations: `init_db` adds missing columns (`sm_request_id`, `notification_url`,
-`previous_sm_slice_id`) without breaking existing databases. An old database keeps its unused
-`slice_registry` table; nothing reads it.
+**No migrations.** On 2026-11-27 the `operations` table lost three columns that nothing read:
+`notification_url`, `payload_fingerprint` and `idempotency_key`. The last two duplicated
+`idempotency_keys`, and being mandatory they forced made-up fingerprints for N5 creates and QoS
+changes. The online migrations were removed at the same time.
+
+The testbed keeps no state worth migrating. `init_db` therefore refuses, at startup, a
+database from an older version (one whose `operations` still has `payload_fingerprint`), with
+a message asking to recreate it: `docker compose -f infra/docker-compose.yml down -v`, or
+delete the file at `TRANSLATOR_DB_PATH`.
 
 ---
 

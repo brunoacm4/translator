@@ -136,15 +136,8 @@ async def create_subscription(
         response.status_code = status.HTTP_202_ACCEPTED
         return result
 
-    # Set Location header per 3GPP spec
-    sub_id = result.self_link or ""
-    if "/" in sub_id:
-        location = sub_id
-    else:
-        base = str(request.url).rstrip("/")
-        location = f"{base}/{sub_id}"
-    response.headers["Location"] = location
-
+    # Location: the subscription's self link, which the service always sets
+    response.headers["Location"] = result.self_link
     return result
 
 

@@ -40,7 +40,6 @@ from app.resilience.circuit_breaker import CircuitBreakerOpen
 from app.store.repositories import OperationRepository
 from app.store.subscription_store import store
 from app.utils.converters import parse_bitrate_to_kbps
-from app.utils.idempotency import build_payload_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +292,6 @@ class SessionCore:
         session_id: str,
         slice_id: str,
         sm_request_id: str,
-        notification_url: Optional[str],
         previous_slice_id: Optional[str] = None,
     ) -> None:
         """Mark the operation provisioning (and poll the SM) or completed.
@@ -312,7 +310,6 @@ class SessionCore:
                 subscription_id=session_id,
                 sm_slice_id=slice_id,
                 sm_request_id=sm_request_id_col,
-                notification_url=notification_url,
                 previous_sm_slice_id=previous_slice_id,
             )
             asyncio.create_task(
@@ -329,7 +326,6 @@ class SessionCore:
                 subscription_id=session_id,
                 sm_slice_id=slice_id,
                 sm_request_id=sm_request_id_col,
-                notification_url=notification_url,
                 previous_sm_slice_id=previous_slice_id,
             )
 
@@ -345,7 +341,6 @@ class SessionCore:
         imsi: str,
         current_slice_id: str,
         resolved: ResolvedQos,
-        notification_url: Optional[str],
         description: str,
     ) -> str:
         """
@@ -368,15 +363,7 @@ class SessionCore:
             return target
 
         operation_id = str(uuid.uuid4())
-        self.operation_repo.create(
-            operation_id=operation_id,
-            scs_as_id=owner,
-            idempotency_key=None,
-            payload_fingerprint=build_payload_fingerprint(
-                owner, {"change": session_id, "slice": target, "op": operation_id}
-            ),
-            status="pending",
-        )
+        self.operation_repo.create(operation_id=operation_id, scs_as_id=owner, status="pending")
 
         payload = self.build_change_payload(target, resolved.sm_snssai, resolved.dnn)
         logger.info(
@@ -400,7 +387,6 @@ class SessionCore:
             session_id=session_id,
             slice_id=target,
             sm_request_id=sm_req_id,
-            notification_url=notification_url,
             previous_slice_id=current_slice_id,
         )
         return target

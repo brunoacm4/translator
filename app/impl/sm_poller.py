@@ -70,8 +70,6 @@ from app.store.subscription_store import store
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATES = frozenset({"completed", "failed"})
-
 
 async def poll_sm_request(sm_request_id: str, operation_id: str) -> None:
     """

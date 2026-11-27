@@ -30,12 +30,6 @@ class Snssai(BaseModel):
         description="Slice Differentiator - 6 hex digits, e.g. '000001'",
     )
 
-    def to_hex(self) -> str:
-        """Return the compact hex representation used by the SM (e.g. '01000001')."""
-        if self.sd:
-            return f"{self.sst:02X}{self.sd}"
-        return f"{self.sst:02X}"
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  FlowInfo  (TS 29.122)

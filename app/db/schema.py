@@ -6,10 +6,20 @@ import sqlite3
 
 from app.db.connection import get_connection
 
+# Column that only databases created before 2026-11-27 have; their operations
+# table no longer matches what the translator writes.
+_OBSOLETE_OPERATIONS_COLUMN = "payload_fingerprint"
+
 
 def init_db() -> None:
-    """Create translator SQLite tables and indexes if they don't exist."""
+    """Create translator SQLite tables and indexes if they don't exist.
+
+    Raises:
+        RuntimeError: the database was created by an older version, whose
+            schema this version does not migrate. Recreate it.
+    """
     conn = get_connection()
+    _reject_obsolete_schema(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS subscriptions (
@@ -27,11 +37,12 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS operations (
             operation_id TEXT PRIMARY KEY,
             scs_as_id TEXT NOT NULL,
-            idempotency_key TEXT,
-            payload_fingerprint TEXT NOT NULL,
             status TEXT NOT NULL,
             subscription_id TEXT,
             sm_slice_id TEXT,
+            sm_request_id TEXT,
+            -- Slice a QoS change moved away from; restored if the change fails (docs/adr/0006)
+            previous_sm_slice_id TEXT,
             error TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -45,12 +56,6 @@ def init_db() -> None:
             operation_id TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_subscriptions_scs_sub
-            ON subscriptions (scs_as_id, subscription_id);
-
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_operations_operation_id
-            ON operations (operation_id);
 
         CREATE INDEX IF NOT EXISTS ix_operations_scs_status
             ON operations (scs_as_id, status);
@@ -69,28 +74,20 @@ def init_db() -> None:
             ON subscriptions (imsi);
         """
     )
-
-    # ── Online migrations (safe ALTER TABLE — silently skips if column exists) ──
-    _add_column_if_missing(conn, "operations", "sm_request_id", "TEXT")
-    _add_column_if_missing(conn, "operations", "notification_url", "TEXT")
-    # Slice a QoS change moved away from; restored if the change fails (docs/adr/0006)
-    _add_column_if_missing(conn, "operations", "previous_sm_slice_id", "TEXT")
     conn.commit()
 
 
-def _add_column_if_missing(
-    conn: sqlite3.Connection,
-    table: str,
-    column: str,
-    col_type: str,
-) -> None:
-    """Add a column to *table* when it does not already exist.
+def _reject_obsolete_schema(conn: sqlite3.Connection) -> None:
+    """Stop at startup on a database from before 2026-11-27.
 
-    SQLite does not support ``ALTER TABLE … ADD COLUMN IF NOT EXISTS``,
-    so we attempt the alter and swallow the ``OperationalError`` that is
-    raised when the column is already there.
+    Its operations table still requires columns the translator no longer
+    writes, so every create would fail. The testbed keeps no state worth
+    migrating: the database is recreated instead.
     """
-    try:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-    except sqlite3.OperationalError:
-        pass  # column already exists — nothing to do
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(operations)")}
+    if _OBSOLETE_OPERATIONS_COLUMN in columns:
+        raise RuntimeError(
+            "The translator database was created by an older version. Recreate it: "
+            "`docker compose -f infra/docker-compose.yml down -v`, or delete the file "
+            "at TRANSLATOR_DB_PATH."
+        )

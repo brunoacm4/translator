@@ -42,7 +42,9 @@ Notes:
 - `container_name` is fixed (`nef-translator`). If a stale container blocks recreation:
   `docker rm -f nef-translator` then re-run `up`.
 - Start from a clean local DB with `docker compose -f infra/docker-compose.yml down -v`
-  (the `-v` wipes the `translator-data` SQLite volume).
+  (the `-v` wipes the `translator-data` SQLite volume). **Required** when the volume holds a
+  database from before 2026-11-27: the translator refuses to start on it and logs a message
+  asking for this ([`CONSIDERATIONS.md`](../CONSIDERATIONS.md) §6).
 - A `failed to prepare extraction snapshot ... parent snapshot does not exist` build error is
   a containerd/cache glitch on the VM, not a code problem. Recover with:
   `docker compose -f infra/docker-compose.yml build --no-cache` (then `up`); if it persists,

@@ -60,8 +60,6 @@ def test_operation_outcome_is_posted_to_the_notification_destination(sqlite_db, 
     operations.create(
         operation_id="op-1",
         scs_as_id="myApp",
-        idempotency_key=None,
-        payload_fingerprint="fp-1",
         status="sm_provisioning",
     )
     operations.update_status(operation_id="op-1", status="sm_provisioning", subscription_id="sub-1")
@@ -112,8 +110,6 @@ def _n5_session_with_operation(previous_slice=None):
     operations.create(
         operation_id="op-n5",
         scs_as_id=N5_OWNER,
-        idempotency_key=None,
-        payload_fingerprint="fp-n5",
         status="sm_provisioning",
     )
     operations.update_status(

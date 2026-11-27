@@ -36,8 +36,6 @@ def _new_operation(operation_id: str) -> OperationRepository:
     repo.create(
         operation_id=operation_id,
         scs_as_id="myApp",
-        idempotency_key=None,
-        payload_fingerprint=f"fp-{operation_id}",
         status="sm_provisioning",
     )
     return repo

@@ -154,9 +154,7 @@ class TranslatorService(BaseTranslatorApi):
             )
 
         try:
-            return await self._create_reserved(
-                scs_as_id, body, idempotency_key, payload_fingerprint, operation_id
-            )
+            return await self._create_reserved(scs_as_id, body, operation_id)
         except Exception:
             # The create did not stand: let an identical request try again.
             self.idempotency_repo.release(operation_id)
@@ -166,18 +164,10 @@ class TranslatorService(BaseTranslatorApi):
         self,
         scs_as_id: str,
         body: AsSessionWithQoSSubscription,
-        idempotency_key: Optional[str],
-        payload_fingerprint: str,
         operation_id: str,
     ) -> AsSessionWithQoSSubscription:
         """Create flow once the idempotency key/fingerprint is reserved."""
-        self.operation_repo.create(
-            operation_id=operation_id,
-            scs_as_id=scs_as_id,
-            idempotency_key=idempotency_key,
-            payload_fingerprint=payload_fingerprint,
-            status="pending",
-        )
+        self.operation_repo.create(operation_id=operation_id, scs_as_id=scs_as_id, status="pending")
 
         # -- 1. QoS profile, S-NSSAI, DNN -------------------------------------
         try:
@@ -229,15 +219,11 @@ class TranslatorService(BaseTranslatorApi):
                 operation_id=operation_id,
             )
 
-        notification_url: Optional[str] = (
-            str(body.notificationDestination) if body.notificationDestination else None
-        )
         self.core.track(
             operation_id=operation_id,
             session_id=subscription_id,
             slice_id=resolved.slice_id,
             sm_request_id=sm_request_id,
-            notification_url=notification_url,
         )
 
         # -- 6. Return -------------------------------------------------------
@@ -313,9 +299,6 @@ class TranslatorService(BaseTranslatorApi):
             imsi=record.imsi,
             current_slice_id=record.sm_slice_id,
             resolved=resolved,
-            notification_url=(
-                str(body.notificationDestination) if body.notificationDestination else None
-            ),
             description=f"(PUT)  sub={subscription_id}",
         )
 
@@ -367,10 +350,6 @@ class TranslatorService(BaseTranslatorApi):
                 imsi=record.imsi,
                 current_slice_id=record.sm_slice_id,
                 resolved=resolved,
-                notification_url=(
-                    str(merged_sub.notificationDestination)
-                    if merged_sub.notificationDestination else None
-                ),
                 description=f"(PATCH)  sub={subscription_id}",
             )
 

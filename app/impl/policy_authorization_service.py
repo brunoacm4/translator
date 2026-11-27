@@ -52,7 +52,6 @@ from app.models.pcf.app_session import (
     TerminationInfo,
 )
 from app.store.subscription_store import store
-from app.utils.idempotency import build_payload_fingerprint
 from app.utils.merge_patch import apply_merge_patch
 
 logger = logging.getLogger(__name__)
@@ -165,13 +164,7 @@ class PolicyAuthorizationService:
 
         data = context.model_dump(mode="json", exclude_none=True)
         operation_id = str(uuid.uuid4())
-        self.operation_repo.create(
-            operation_id=operation_id,
-            scs_as_id=N5_OWNER,
-            idempotency_key=None,
-            payload_fingerprint=build_payload_fingerprint(N5_OWNER, data),
-            status="pending",
-        )
+        self.operation_repo.create(operation_id=operation_id, scs_as_id=N5_OWNER, status="pending")
 
         try:
             resolved = resolve_qos(self._intent(req))
@@ -220,7 +213,6 @@ class PolicyAuthorizationService:
             session_id=app_session_id,
             slice_id=resolved.slice_id,
             sm_request_id=sm_request_id,
-            notification_url=req.evSubsc.notifUri if req.evSubsc else None,
         )
         return resource_uri, data
 
@@ -265,7 +257,6 @@ class PolicyAuthorizationService:
                 imsi=record.imsi,
                 current_slice_id=record.sm_slice_id,
                 resolved=resolved,
-                notification_url=req.evSubsc.notifUri if req.evSubsc else None,
                 description=f"(N5 PATCH)  appSession={app_session_id}",
             )
 
