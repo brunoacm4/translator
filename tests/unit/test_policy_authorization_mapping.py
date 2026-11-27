@@ -6,6 +6,7 @@ import pytest
 
 from app.impl.notifier import build_termination_request
 from app.impl.policy_authorization_service import PolicyAuthorizationService
+from app.impl.session_core import QosRejected
 from app.models.pcf.app_session import AppSessionContextReqData
 
 RESOURCE_URI = "http://translator:8081/npcf-policyauthorization/v1/app-sessions/abc"
@@ -37,7 +38,7 @@ def test_intent_rejects_components_with_different_qos_references() -> None:
         "1": {"medCompN": 1, "qosReference": "qos_ref_1"},
         "2": {"medCompN": 2, "qosReference": "qos_ref_2"},
     })
-    with pytest.raises(ValueError):
+    with pytest.raises(QosRejected):
         PolicyAuthorizationService._intent(req)
 
 

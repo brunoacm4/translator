@@ -27,6 +27,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.impl.session_core import SmFailed, SmUnavailable
+
 PROBLEM_JSON = "application/problem+json"
 
 logger = logging.getLogger(__name__)
@@ -92,11 +94,22 @@ async def _validation_exception_handler(
     return problem_response(400, "The request is not valid", invalid_params)
 
 
+async def _sm_unavailable_handler(_: Request, exc: SmUnavailable) -> JSONResponse:
+    return problem_response(503, str(exc))
+
+
+async def _sm_failed_handler(_: Request, exc: SmFailed) -> JSONResponse:
+    return problem_response(502, str(exc))
+
+
 def register_problem_handlers(app: FastAPI) -> None:
     """Install the ``ProblemDetails`` exception handlers on *app*, and document
-    them in its OpenAPI schema."""
+    them in its OpenAPI schema. A failed SM call answers the same in both
+    APIs: 503 when the circuit breaker is open, 502 otherwise."""
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
+    app.add_exception_handler(SmUnavailable, _sm_unavailable_handler)
+    app.add_exception_handler(SmFailed, _sm_failed_handler)
     _document_problem_details(app)
 
 

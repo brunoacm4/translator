@@ -8,7 +8,7 @@
     the translation core (``app.impl.session_core``). Minimal scope
     (docs/adr/0003):
 
-      POST  /app-sessions                        →  core start  (SM associate)
+      POST  /app-sessions                        →  core create (SM associate)
       PATCH /app-sessions/{appSessionId}         →  core change (medComponents changed)
       POST  /app-sessions/{appSessionId}/delete  →  core stop   (SM dissociate)
 
@@ -32,18 +32,19 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.config.subscriber_map import resolve_imsi
 from app.impl.notifier import N5_OWNER
 from app.impl.session_core import (
     QosIntent,
+    QosRejected,
     SessionCore,
+    SessionRejected,
     UeSessionExists,
+    UnknownUe,
     bitrate_kbps,
     resolve_qos,
 )
@@ -57,13 +58,23 @@ from app.utils.merge_patch import apply_merge_patch
 
 logger = logging.getLogger(__name__)
 
+# HTTP status of each refusal of the core, as the Open5GS 2.8.0 PCF answers
+_REJECTION_STATUS = {
+    QosRejected: 403,
+    UnknownUe: 404,
+    UeSessionExists: 403,  # the create operation lists no 409 (docs/adr/0006)
+}
+
+
+def _rejection(exc: SessionRejected) -> HTTPException:
+    return HTTPException(status_code=_REJECTION_STATUS[type(exc)], detail=str(exc))
+
 
 class PolicyAuthorizationService:
     """Translates N5 application sessions into translation-core sessions."""
 
     def __init__(self) -> None:
         self.core = SessionCore()
-        self.operation_repo = self.core.operation_repo
 
     # ================================================================== #
     #  Internal: N5 request → interface-neutral QoS intent                #
@@ -81,12 +92,12 @@ class PolicyAuthorizationService:
         (docs/adr/0006).
 
         Raises:
-            ValueError: conflicting ``qosReference`` values.
+            QosRejected: conflicting ``qosReference`` values.
         """
         components = sorted((req.medComponents or {}).values(), key=lambda m: m.medCompN)
         references = sorted({m.qosReference for m in components if m.qosReference})
         if len(references) > 1:
-            raise ValueError(
+            raise QosRejected(
                 f"Media components request different qosReference values {references}; "
                 "one QoS profile applies per UE session"
             )
@@ -131,58 +142,21 @@ class PolicyAuthorizationService:
             raise HTTPException(status_code=400, detail="ascReqData is required")
 
         data = context.model_dump(mode="json", exclude_none=True)
-        operation_id = str(uuid.uuid4())
-        self.operation_repo.create(operation_id=operation_id, scs_as_id=N5_OWNER, status="pending")
-
+        collection = collection_uri.rstrip("/")
         try:
-            resolved = resolve_qos(self._intent(req))
-        except ValueError as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id, status="failed", error=str(exc)
-            )
-            raise HTTPException(status_code=403, detail=str(exc))
-
-        try:
-            imsi = resolve_imsi(ue_ipv4=req.ueIpv4, ue_ipv6=req.ueIpv6)
-        except ValueError as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id, status="failed", error=str(exc)
-            )
-            raise HTTPException(status_code=404, detail=str(exc))
-
-        app_session_id = str(uuid.uuid4())
-        resource_uri = f"{collection_uri.rstrip('/')}/{app_session_id}"
-        async with self.core.ue_lock(imsi):
-            try:
-                self.core.ensure_no_session(imsi)
-            except UeSessionExists as exc:
-                self.operation_repo.update_status(
-                    operation_id=operation_id, status="failed", error=str(exc)
-                )
-                raise HTTPException(status_code=403, detail=str(exc))
-
-            sm_request_id = await self.core.start(
+            _, stored = await self.core.create(
                 owner=N5_OWNER,
-                session_id=app_session_id,
-                resolved=resolved,
-                imsi=imsi,
-                operation_id=operation_id,
+                intent=self._intent(req),
+                ue_ipv4=req.ueIpv4,
+                ue_ipv6=req.ueIpv6,
+                session_data=lambda session_id: {
+                    "context": data,
+                    "resourceUri": f"{collection}/{session_id}",
+                },
             )
-            store.create(
-                scs_as_id=N5_OWNER,
-                subscription_id=app_session_id,
-                sm_slice_id=resolved.slice_id,
-                imsi=imsi,
-                data={"context": data, "resourceUri": resource_uri},
-                operation_id=operation_id,
-            )
-        self.core.track(
-            operation_id=operation_id,
-            session_id=app_session_id,
-            slice_id=resolved.slice_id,
-            sm_request_id=sm_request_id,
-        )
-        return resource_uri, data
+        except SessionRejected as exc:
+            raise _rejection(exc) from None
+        return stored["resourceUri"], data
 
     # ------------------------------------------------------------------ #
     #  PATCH /app-sessions/{appSessionId} — Modify                        #
@@ -217,8 +191,8 @@ class PolicyAuthorizationService:
         if "medComponents" in (patch_data.get("ascReqData") or {}):
             try:
                 resolved = resolve_qos(self._intent(req))
-            except ValueError as exc:
-                raise HTTPException(status_code=403, detail=str(exc))
+            except SessionRejected as exc:
+                raise _rejection(exc) from None
             slice_id = await self.core.change(
                 owner=N5_OWNER,
                 session_id=app_session_id,

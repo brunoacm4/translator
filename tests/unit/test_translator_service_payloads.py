@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.config.settings import Settings
-from app.impl.session_core import QosIntent, SessionCore, resolve_qos
+from app.impl.session_core import QosIntent, QosRejected, SessionCore, resolve_qos
 from app.impl.translator_service import TranslatorService
 from app.models.nef.subscription import AsSessionWithQoSSubscription
 
@@ -18,12 +18,12 @@ def test_the_profile_selects_the_slice() -> None:
 
 
 def test_a_profile_is_required() -> None:
-    with pytest.raises(ValueError, match="qosReference is required"):
+    with pytest.raises(QosRejected, match="qosReference is required"):
         resolve_qos(QosIntent())
 
 
 def test_an_unknown_profile_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Unknown qos_reference"):
+    with pytest.raises(QosRejected, match="Unknown qos_reference"):
         resolve_qos(QosIntent(qos_reference="no_such_profile"))
 
 
@@ -36,7 +36,7 @@ def test_an_unknown_profile_is_rejected() -> None:
     ],
 )
 def test_snssai_or_dnn_that_differ_from_the_slice_are_rejected(intent) -> None:
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(QosRejected, match="does not match"):
         resolve_qos(intent)
 
 

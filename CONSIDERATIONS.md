@@ -39,9 +39,9 @@ fork was last updated 2026-06-16 and predates `/operations` (§4.7).
 
 | Layer | Location | Responsibility |
 |-------|----------|----------------|
-| API / routes | `app/apis/` | 3GPP endpoints, input validation, auto-discovery of the implementation |
-| Northbound adapters | `app/impl/translator_service.py` (29.122), `app/impl/policy_authorization_service.py` (N5) | Map each API onto the core: resolve data, idempotency (29.122), one session per UE, store |
-| Translation core | `app/impl/session_core.py` | Profile → slice resolution, SM payloads, every SM call, operation tracking |
+| API / routes | `app/apis/` | 3GPP endpoints, input validation, `ProblemDetails` errors (502/503 for a failed SM call) |
+| Northbound adapters | `app/impl/translator_service.py` (29.122), `app/impl/policy_authorization_service.py` (N5) | Map each API onto the core: build the intent and the stored data, idempotency (29.122), merge patches, map the core's refusals to status codes |
+| Translation core | `app/impl/session_core.py` | The rules of a session (profile → slice, UE, one session per UE), SM payloads, every SM call, operation tracking; its own errors, no HTTP |
 | SM client | `app/impl/sm_client.py` | Async HTTP client (shared connection pool, retry, circuit breaker) |
 | Async polling | `app/impl/sm_poller.py` | Background task tracking SM operations to a terminal state; reverts a failed QoS change (§4.7, §4.9) |
 | Models | `app/models/` | Pydantic 3GPP types + the local operation model |
@@ -60,7 +60,18 @@ single implementation that added nothing, and it was removed on 2026-11-27.
 ## 3. Create flow (the richest path)
 
 `POST /subscriptions` (29.122) exercises every decision below; the N5 `POST /app-sessions`
-follows the same steps without idempotency.
+follows the same steps without idempotency. Steps 2 to 7 are one function of the core,
+`SessionCore.create`, shared by both APIs. A refusal in steps 2 to 4 writes nothing. Each
+API maps it to its own status code:
+
+| Refusal | 29.122 | N5 |
+|---|---|---|
+| Missing, unknown or conflicting `qosReference`; S-NSSAI / DNN not matching the slice | 400 | 403 |
+| UE address not in the subscriber map | 400 | 404 |
+| The UE already has a session | 403 | 403 |
+
+A failed SM call in step 5 answers 502 in both APIs, or 503 while the circuit breaker is
+open, and leaves a `failed` operation and no session.
 
 ```text
 1. Idempotency    fingerprint = SHA-256(scsAsId + body); reserve it.
@@ -71,7 +82,8 @@ follows the same steps without idempotency.
 3. IMSI           resolve from the UE IP (subscriber_map).
 4. One per UE     under a per-UE lock: reject if the UE already has a session
                   in either API (ADR 0006).
-5. SM associate   associate the UE with the profile's slice.
+5. SM associate   record the operation (pending) and associate the UE with the
+                  profile's slice.
 6. Persist        store the session with its slice.
 7. Finalise       poll the SM request until terminal, then notify the
                   application (§4.7, §4.13).
@@ -85,9 +97,10 @@ sequenceDiagram
     participant DB as SQLite
     participant SM as Slice Manager
     NEF->>T: POST /subscriptions (AsSessionWithQoS)
-    T->>DB: reserve idempotency + create operation (pending)
+    T->>DB: reserve idempotency
     T->>T: resolve profile → slice, IMSI
     T->>DB: no other session for this UE?
+    T->>DB: create operation (pending)
     T->>SM: POST /core/ues/{imsi}/slice-associations (associate)
     SM-->>T: 202 + request_id
     T->>DB: store session; operation → sm_provisioning
@@ -295,18 +308,23 @@ and the session is then forgotten. *(`app/impl/notifier.py`.)*
 The translator tracks its **own** operation lifecycle (distinct from the SM's internal one):
 
 ```text
-pending ──► published ──► sm_provisioning ──► completed / failed   (polling enabled, default)
-                      └──► completed                               (polling disabled)
-   └────────────────────────────────────────► failed   (on any error)
+pending ──► sm_provisioning ──► completed / failed   (polling enabled, default)
+   ├──────► completed                                 (polling disabled)
+   └──────► failed                                    (the SM call failed)
 ```
 
-- **pending** -  created locally, before calling the SM.
-- **published** -  profile and slice resolved (local meaning; not the SM's `published`,
-  which only says the message reached Kafka). A QoS change starts at **pending** and goes
-  straight to **sm_provisioning** once the SM accepts the move.
-- **sm_provisioning** -  the SM accepted every write; the poller follows them (§4.7).
-- **completed / failed** -  terminal. With polling on, the poller sets it from the SM's
-  terminal states; with polling off, `completed` is set as soon as the SM accepts the writes.
+An operation is one SM write: the associate of a create, or the move of a QoS change. Both
+follow the same path.
+
+- **pending**: recorded just before the SM call. A request the translator refuses (profile,
+  UE, second session) records no operation at all.
+- **sm_provisioning**: the SM accepted the write, and the poller follows it (§4.7).
+- **completed / failed**: terminal. With polling on, the poller sets it from the SM's
+  terminal state. With polling off, `completed` is set as soon as the SM accepts the write.
+
+Until 2026-11-27 a create also passed through a local `published` state (profile and slice
+resolved). It disappeared with the single create flow, because a create now records its
+operation only when it is about to call the SM.
 
 ---
 

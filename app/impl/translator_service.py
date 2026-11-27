@@ -3,18 +3,19 @@
 """
     Translator Service — TS 29.122 AsSessionWithQoS
 
-    Called by the 29.122 router (``app.apis.translator_api``). Maps 3GPP TS 29.122 AsSessionWithQoS subscription operations onto the
-    translation core (``app.impl.session_core``), which drives the Slice
-    Manager (model B: the SM pre-creates the slices, docs/adr/0004):
+    Called by the 29.122 router (``app.apis.translator_api``). Maps 3GPP
+    TS 29.122 AsSessionWithQoS subscription operations onto the translation
+    core (``app.impl.session_core``), which drives the Slice Manager (model B:
+    the SM pre-creates the slices, docs/adr/0004):
 
-      POST   subscription  →  core start  (SM associate_slice)
+      POST   subscription  →  core create (SM associate_slice)
       PUT    subscription  →  core change (SM change_slice when the slice changes)
       PATCH  subscription  →  core change (partial)
       DELETE subscription  →  core stop   (SM dissociate_slice)
       GET    subscription  →  read from SQLite-backed store
 
-    One session per UE: a create for a UE that already has a session (in
-    either API) is rejected with ``UE_SESSION_EXISTS_STATUS`` (docs/adr/0006).
+    The core's refusals become 400, except a second session for a UE, which
+    becomes ``UE_SESSION_EXISTS_STATUS`` (docs/adr/0006).
 """
 
 from __future__ import annotations
@@ -28,29 +29,41 @@ from pydantic import ValidationError
 
 from app.impl.session_core import (
     QosIntent,
+    QosRejected,
     SessionCore,
+    SessionRejected,
     UeSessionExists,
+    UnknownUe,
     bitrate_kbps,
     resolve_qos,
+    resolve_ue,
 )
 from app.models.nef.subscription import (
     AsSessionWithQoSSubscription,
     AsSessionWithQoSSubscriptionPatch,
 )
 from app.models.operation import OperationAccepted, OperationStatus
+from app.store.repositories import IdempotencyRepository
 from app.store.subscription_store import store
-
-# Config & utils
-from app.config.subscriber_map import resolve_imsi
 from app.utils.idempotency import build_payload_fingerprint
 from app.utils.merge_patch import apply_merge_patch
-from app.store.repositories import IdempotencyRepository
 
 logger = logging.getLogger(__name__)
 
 # docs/adr/0006 (decision 3): 409 if TS 29.122 allows it on a create, 403 if
 # not. Kept at 403 until the TS 29.122 OpenAPI has been checked.
 UE_SESSION_EXISTS_STATUS = 403
+
+# HTTP status of each refusal of the core
+_REJECTION_STATUS = {
+    QosRejected: 400,
+    UnknownUe: 400,
+    UeSessionExists: UE_SESSION_EXISTS_STATUS,
+}
+
+
+def _rejection(exc: SessionRejected) -> HTTPException:
+    return HTTPException(status_code=_REJECTION_STATUS[type(exc)], detail=str(exc))
 
 
 class TranslatorService:
@@ -124,14 +137,10 @@ class TranslatorService:
         idempotency_key: Optional[str] = None,
     ) -> Union[AsSessionWithQoSSubscription, OperationAccepted]:
         """
-        Full create flow with idempotency guard:
-          1. Reserve idempotency key/fingerprint
-          2. Resolve QoS profile and IMSI
-          3. Reject a second session for the UE (docs/adr/0006)
-          4. Start the session in the translation core (SM associate)
-          5. Store subscription and operation status
+        Create a subscription, guarded by idempotency: reserve the key and
+        fingerprint, then let the core create the session (docs/adr/0006).
+        A repeated request gets the original operation back.
         """
-
         body_for_fingerprint = body.model_dump(by_alias=True, exclude_none=True)
         payload_fingerprint = build_payload_fingerprint(scs_as_id, body_for_fingerprint)
         operation_id = str(uuid.uuid4())
@@ -150,80 +159,21 @@ class TranslatorService:
             )
 
         try:
-            return await self._create_reserved(scs_as_id, body, operation_id)
-        except Exception:
+            _, data = await self.core.create(
+                owner=scs_as_id,
+                intent=self._intent(body),
+                ue_ipv4=body.ueIpv4Addr,
+                ue_ipv6=body.ueIpv6Addr,
+                session_data=lambda session_id: self._sub_to_dict(body, scs_as_id, session_id),
+                operation_id=operation_id,
+            )
+        except Exception as exc:
             # The create did not stand: let an identical request try again.
             self.idempotency_repo.release(operation_id)
+            if isinstance(exc, SessionRejected):
+                raise _rejection(exc) from None
             raise
-
-    async def _create_reserved(
-        self,
-        scs_as_id: str,
-        body: AsSessionWithQoSSubscription,
-        operation_id: str,
-    ) -> AsSessionWithQoSSubscription:
-        """Create flow once the idempotency key/fingerprint is reserved."""
-        self.operation_repo.create(operation_id=operation_id, scs_as_id=scs_as_id, status="pending")
-
-        # -- 1. QoS profile, S-NSSAI, DNN -------------------------------------
-        try:
-            resolved = resolve_qos(self._intent(body))
-        except ValueError as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id,
-                status="failed",
-                error=str(exc),
-            )
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        # -- 2. IMSI resolution ----------------------------------------------
-        try:
-            imsi = resolve_imsi(ue_ipv4=body.ueIpv4Addr, ue_ipv6=body.ueIpv6Addr)
-        except ValueError as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id,
-                status="failed",
-                error=str(exc),
-            )
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        # -- 3-5. One session per UE; SM associate; store -------------------
-        subscription_id = str(uuid.uuid4())
-        sub_data = self._sub_to_dict(body, scs_as_id, subscription_id)
-        async with self.core.ue_lock(imsi):
-            try:
-                self.core.ensure_no_session(imsi)
-            except UeSessionExists as exc:
-                self.operation_repo.update_status(
-                    operation_id=operation_id, status="failed", error=str(exc)
-                )
-                raise HTTPException(status_code=UE_SESSION_EXISTS_STATUS, detail=str(exc))
-
-            sm_request_id = await self.core.start(
-                owner=scs_as_id,
-                session_id=subscription_id,
-                resolved=resolved,
-                imsi=imsi,
-                operation_id=operation_id,
-            )
-            store.create(
-                scs_as_id=scs_as_id,
-                subscription_id=subscription_id,
-                sm_slice_id=resolved.slice_id,
-                imsi=imsi,
-                data=sub_data,
-                operation_id=operation_id,
-            )
-
-        self.core.track(
-            operation_id=operation_id,
-            session_id=subscription_id,
-            slice_id=resolved.slice_id,
-            sm_request_id=sm_request_id,
-        )
-
-        # -- 6. Return -------------------------------------------------------
-        return AsSessionWithQoSSubscription.model_validate(sub_data)
+        return AsSessionWithQoSSubscription.model_validate(data)
 
     # ------------------------------------------------------------------ #
     #  GET list — List subscriptions                                      #
@@ -269,25 +219,20 @@ class TranslatorService:
         if not record:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        # The UE cannot change: the session lives on this UE's IMSI at the SM
-        # (for the same reason the 3GPP PATCH body has no UE address fields).
         try:
-            imsi = resolve_imsi(ue_ipv4=body.ueIpv4Addr, ue_ipv6=body.ueIpv6Addr)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        if imsi != record.imsi:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "The UE of a subscription cannot be changed; "
-                    "delete the subscription and create a new one"
-                ),
-            )
-
-        try:
+            # The UE cannot change: the session lives on this UE's IMSI at the
+            # SM (for the same reason the 3GPP PATCH body has no UE address fields).
+            if resolve_ue(body.ueIpv4Addr, body.ueIpv6Addr) != record.imsi:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "The UE of a subscription cannot be changed; "
+                        "delete the subscription and create a new one"
+                    ),
+                )
             resolved = resolve_qos(self._intent(body))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        except SessionRejected as exc:
+            raise _rejection(exc) from None
 
         slice_id = await self.core.change(
             owner=scs_as_id,
@@ -337,8 +282,8 @@ class TranslatorService:
         if "qosReference" in patch_data or "tscQosReq" in patch_data:
             try:
                 resolved = resolve_qos(self._intent(merged_sub))
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
+            except SessionRejected as exc:
+                raise _rejection(exc) from None
 
             slice_id = await self.core.change(
                 owner=scs_as_id,

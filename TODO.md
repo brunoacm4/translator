@@ -16,7 +16,7 @@ the slice its `qosReference` selects, moves it on a QoS change and dissociates i
 - One session per UE across both APIs (`403`).
 - QoS changes are tracked to completion, notified, and reverted on failure.
 - The slice map holds placeholders until the SM team sends its list.
-- 96 unit + integration tests green (2026-11-27, after removing unread data and dead code).
+- 100 unit + integration tests green (2026-11-27, one create flow in the core).
 - Each answer to the NEF fits its 25 s limit: one SM attempt of 15 s (CONSIDERATIONS §4.6).
 - Rejected requests are logged with their reason, never with their body (CONSIDERATIONS §4.14).
 
@@ -50,7 +50,7 @@ patch / delete all pass at the HTTP level; DELETE returns `204` (idempotent on S
 1. **Prerequisites** - Python 3.11; access to the testbed VPN; the `nef-translator-dev-0` and
    `sandbox` Docker contexts configured (`docker context ls`).
 2. **Set up & run the tests** - follow [`README.md`](README.md) "Quick start";
-   `python -m pytest -q` → 96 passing.
+   `python -m pytest -q` → 100 passing.
 3. **Bring up the SM sandbox** - [`infra/README.md`](infra/README.md) "Deploy the Slice
    Manager sandbox" (remember the empty `.env` gotcha, and that it predates the current SM).
 4. **Deploy the translator to its VM** - [`infra/README.md`](infra/README.md) "Deploy the

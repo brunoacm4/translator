@@ -11,14 +11,20 @@
 
     The Slice Manager pre-creates one slice per QoS profile (model B,
     docs/adr/0004); the ``qosReference`` selects it (docs/adr/0005). The core
-    owns every Slice Manager interaction:
+    owns the rules of a session and every Slice Manager interaction:
 
-      start   →  SM associate_slice (UE onto the profile's slice)
-      track   →  record the outcome, poll SM /operations when enabled
+      create  →  profile and UE checks, one session per UE, SM associate_slice,
+                 store the session, track the SM operation
       change  →  SM change_slice (UE onto another profile's slice), tracked
       stop    →  SM dissociate_slice
 
     Request handling under model B follows docs/adr/0006.
+
+    Errors are the core's own, never HTTP: a refusal is a ``SessionRejected``
+    (``QosRejected``, ``UnknownUe``, ``UeSessionExists``), raised before
+    anything is written, and each API maps it to its status code. A failed SM
+    call is ``SmUnavailable`` (circuit open) or ``SmFailed``, answered 503 and
+    502 by both APIs (``app.apis.problem_details``).
 """
 
 from __future__ import annotations
@@ -27,13 +33,12 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any, Awaitable, Dict, List, Optional
-
-from fastapi import HTTPException
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.config import testbed_defaults as tb
 from app.config.qos_profiles import QoSProfile, resolve_qos_profile
 from app.config.settings import settings
+from app.config.subscriber_map import resolve_imsi
 from app.impl.sm_client import SliceManagerClient
 from app.impl.sm_poller import poll_sm_request
 from app.resilience.circuit_breaker import CircuitBreakerOpen
@@ -47,6 +52,40 @@ logger = logging.getLogger(__name__)
 def bitrate_kbps(value: Optional[str]) -> Optional[int]:
     """3GPP ``BitRate`` string (e.g. ``"10 Mbps"``) to KBPS; None when absent or unparsable."""
     return parse_bitrate_to_kbps(value) if value else None
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Errors
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class SessionRejected(Exception):
+    """A request the core refuses, before writing anything. ``str()`` is the reason."""
+
+
+class QosRejected(SessionRejected):
+    """No, unknown or conflicting ``qosReference``, or an S-NSSAI / DNN that
+    does not match the profile's slice (docs/adr/0006, decisions 1 and 2)."""
+
+
+class UnknownUe(SessionRejected):
+    """The UE address is not in the subscriber map."""
+
+
+class UeSessionExists(SessionRejected):
+    """The UE already has a QoS session (docs/adr/0006, decision 3)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The UE already has an active QoS session; delete it before creating another"
+        )
+
+
+class SmUnavailable(Exception):
+    """The SM circuit breaker is open: the SM was not called."""
+
+
+class SmFailed(Exception):
+    """An SM call failed: network error, timeout or an error answer."""
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -101,14 +140,15 @@ def resolve_qos(intent: QosIntent) -> ResolvedQos:
     Select the QoS profile of an intent (docs/adr/0006, decisions 1 and 2).
 
     Raises:
-        ValueError: no ``qos_reference``, an unknown one, or an S-NSSAI / DNN
+        QosRejected: no ``qos_reference``, an unknown one, or an S-NSSAI / DNN
             in the request that differs from the selected profile's slice.
     """
     if not intent.qos_reference:
-        raise ValueError(
-            "A qosReference is required: it selects the slice of the session"
-        )
-    profile = resolve_qos_profile(intent.qos_reference)
+        raise QosRejected("A qosReference is required: it selects the slice of the session")
+    try:
+        profile = resolve_qos_profile(intent.qos_reference)
+    except ValueError as exc:
+        raise QosRejected(str(exc)) from None
 
     mismatches: List[str] = []
     if intent.sst is not None:
@@ -119,21 +159,23 @@ def resolve_qos(intent: QosIntent) -> ResolvedQos:
     if intent.dnn is not None and intent.dnn != profile.dnn:
         mismatches.append(f"DNN '{intent.dnn}' (slice has '{profile.dnn}')")
     if mismatches:
-        raise ValueError(
+        raise QosRejected(
             f"qosReference '{intent.qos_reference}' selects slice '{profile.slice_id}', "
             f"which does not match the requested {' and '.join(mismatches)}"
         )
     return ResolvedQos(intent=intent, profile=profile)
 
 
-class UeSessionExists(Exception):
-    """The UE already has a QoS session (docs/adr/0006, decision 3)."""
+def resolve_ue(ue_ipv4: Optional[str], ue_ipv6: Optional[str]) -> str:
+    """IMSI of the UE with this address.
 
-    def __init__(self, imsi: str) -> None:
-        super().__init__(
-            "The UE already has an active QoS session; delete it before creating another"
-        )
-        self.imsi = imsi
+    Raises:
+        UnknownUe: the address is not in the subscriber map.
+    """
+    try:
+        return resolve_imsi(ue_ipv4=ue_ipv4, ue_ipv6=ue_ipv6)
+    except ValueError as exc:
+        raise UnknownUe(str(exc)) from None
 
 
 # Per-UE locks, shared by every SessionCore instance of the process, so that
@@ -141,65 +183,22 @@ class UeSessionExists(Exception):
 _ue_locks: Dict[str, asyncio.Lock] = {}
 
 
+def _ue_lock(imsi: str) -> asyncio.Lock:
+    if imsi not in _ue_locks:
+        _ue_locks[imsi] = asyncio.Lock()
+    return _ue_locks[imsi]
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Slice Manager orchestration
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class SessionCore:
-    """Slice Manager side of every QoS session, shared by both APIs."""
+    """The rules of every QoS session and its Slice Manager side, shared by both APIs."""
 
     def __init__(self) -> None:
         self.sm_client = SliceManagerClient()
         self.operation_repo = OperationRepository()
-
-    # ================================================================== #
-    #  One session per UE                                                 #
-    # ================================================================== #
-
-    @staticmethod
-    def ue_lock(imsi: str) -> asyncio.Lock:
-        """The process-wide lock that serialises session creation for a UE."""
-        if imsi not in _ue_locks:
-            _ue_locks[imsi] = asyncio.Lock()
-        return _ue_locks[imsi]
-
-    @staticmethod
-    def ensure_no_session(imsi: str) -> None:
-        """Raise ``UeSessionExists`` if the UE has a session in either API.
-
-        Call it while holding ``ue_lock(imsi)``, up to the session's store.
-        """
-        if store.get_by_imsi(imsi) is not None:
-            raise UeSessionExists(imsi)
-
-    # ================================================================== #
-    #  SM call wrapper                                                    #
-    # ================================================================== #
-
-    @staticmethod
-    async def call_sm(coro: Awaitable[str], description: str) -> str:
-        """
-        Await an SM coroutine, translating exceptions to HTTP status codes.
-        Returns the SM ``request_id`` string on success.
-        """
-        try:
-            return await coro
-        except CircuitBreakerOpen as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"{description} failed: {exc}")
-
-    @staticmethod
-    def poll_untracked(sm_request_id: str) -> None:
-        """Follow an SM write that has no local operation record (log only).
-
-        An empty ID is skipped (e.g. a tolerated 404 on dissociate).
-        """
-        if settings.sm_polling_enabled and sm_request_id:
-            asyncio.create_task(
-                poll_sm_request(sm_request_id=sm_request_id, operation_id=""),
-                name=f"poll-{sm_request_id[:8]}",
-            )
 
     # ================================================================== #
     #  SM payloads                                                        #
@@ -238,96 +237,80 @@ class SessionCore:
         }
 
     # ================================================================== #
-    #  start — associate the UE with the profile's slice                  #
+    #  create — a new session                                             #
     # ================================================================== #
 
-    async def start(
+    async def create(
         self,
         *,
         owner: str,
-        session_id: str,
-        resolved: ResolvedQos,
-        imsi: str,
-        operation_id: str,
-    ) -> str:
+        intent: QosIntent,
+        ue_ipv4: Optional[str],
+        ue_ipv6: Optional[str],
+        session_data: Callable[[str], Dict[str, Any]],
+        operation_id: Optional[str] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
         """
-        Associate the UE with the pre-provisioned slice of its profile.
+        Create a session: select the profile's slice, resolve the UE, enforce
+        one session per UE, associate the UE in the SM, store the session and
+        track the SM operation (docs/adr/0006).
 
-        The operation record is marked failed if the SM rejects the call.
+        Args:
+            owner:         the session's owner: the 29.122 scsAsId, or N5_OWNER.
+            session_data:  builds what is stored for the session, from its ID.
+            operation_id:  fixed in advance by the caller (29.122 idempotency);
+                           generated when omitted.
 
         Returns:
-            The SM request ID of the associate ("" if the SM returned none).
+            (session ID, stored data)
+
+        Raises:
+            QosRejected, UnknownUe, UeSessionExists: refused; nothing written.
+            SmUnavailable, SmFailed: the SM call failed; the operation is
+                recorded as failed and no session is stored.
         """
-        slice_id = resolved.slice_id
-        logger.info(
-            "Starting session  owner=%s  session=%s  slice=%s  imsi=%s",
-            owner, session_id, slice_id, imsi,
-        )
-        self.operation_repo.update_status(
-            operation_id=operation_id, status="published", sm_slice_id=slice_id
-        )
+        resolved = resolve_qos(intent)
+        imsi = resolve_ue(ue_ipv4, ue_ipv6)
+        session_id = str(uuid.uuid4())
+        operation_id = operation_id or str(uuid.uuid4())
+        data = session_data(session_id)
 
-        payload = self.build_associate_payload(slice_id, resolved.sm_snssai, resolved.dnn)
-        logger.info("→ SM associate_slice  imsi=%s  slice=%s", imsi, slice_id)
-        try:
-            sm_req_id = await self.call_sm(
-                self.sm_client.associate_slice(imsi, payload), "SM associate_slice"
+        async with _ue_lock(imsi):
+            if store.get_by_imsi(imsi) is not None:
+                raise UeSessionExists()
+
+            logger.info(
+                "→ SM associate_slice  owner=%s  session=%s  slice=%s  imsi=%s",
+                owner, session_id, resolved.slice_id, imsi,
             )
-        except HTTPException as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id, status="failed",
-                sm_slice_id=slice_id, error=str(exc.detail),
-            )
-            raise
-        return sm_req_id
-
-    # ================================================================== #
-    #  track — record the outcome of an SM write                          #
-    # ================================================================== #
-
-    def track(
-        self,
-        *,
-        operation_id: str,
-        session_id: str,
-        slice_id: str,
-        sm_request_id: str,
-        previous_slice_id: Optional[str] = None,
-    ) -> None:
-        """Mark the operation provisioning (and poll the SM) or completed.
-
-        ``previous_slice_id`` marks a QoS change: if the SM reports it failed,
-        the poller puts the session back on that slice.
-        """
-        sm_request_id_col = sm_request_id or None
-
-        if settings.sm_polling_enabled and sm_request_id:
-            # Async tracking: mark provisioning and poll SM /operations until
-            # every SM request is terminal, then notify the application.
-            self.operation_repo.update_status(
+            sm_request_id = await self._tracked_sm_call(
+                owner=owner,
                 operation_id=operation_id,
-                status="sm_provisioning",
+                slice_id=resolved.slice_id,
+                call=self.sm_client.associate_slice(
+                    imsi,
+                    self.build_associate_payload(
+                        resolved.slice_id, resolved.sm_snssai, resolved.dnn
+                    ),
+                ),
+                description="SM associate_slice",
+            )
+            store.create(
+                scs_as_id=owner,
                 subscription_id=session_id,
-                sm_slice_id=slice_id,
-                sm_request_id=sm_request_id_col,
-                previous_sm_slice_id=previous_slice_id,
-            )
-            asyncio.create_task(
-                poll_sm_request(sm_request_id=sm_request_id, operation_id=operation_id),
-                name=f"poll-{operation_id[:8]}",
-            )
-        else:
-            # Polling disabled (older SM without /operations): the synchronous
-            # 202 (state="published") is the terminal result we can observe, so
-            # the operation is complete once the SM has accepted the request.
-            self.operation_repo.update_status(
+                sm_slice_id=resolved.slice_id,
+                imsi=imsi,
+                data=data,
                 operation_id=operation_id,
-                status="completed",
-                subscription_id=session_id,
-                sm_slice_id=slice_id,
-                sm_request_id=sm_request_id_col,
-                previous_sm_slice_id=previous_slice_id,
             )
+
+        self._track(
+            operation_id=operation_id,
+            session_id=session_id,
+            slice_id=resolved.slice_id,
+            sm_request_id=sm_request_id,
+        )
+        return session_id, data
 
     # ================================================================== #
     #  change — move the UE to the slice of another profile               #
@@ -353,6 +336,10 @@ class SessionCore:
 
         Returns:
             The slice the session is on once the SM accepted the move.
+
+        Raises:
+            SmUnavailable, SmFailed: the SM call failed; the operation is
+                recorded as failed.
         """
         target = resolved.slice_id
         if target == current_slice_id:
@@ -363,30 +350,26 @@ class SessionCore:
             return target
 
         operation_id = str(uuid.uuid4())
-        self.operation_repo.create(operation_id=operation_id, scs_as_id=owner, status="pending")
-
-        payload = self.build_change_payload(target, resolved.sm_snssai, resolved.dnn)
         logger.info(
             "→ SM change_slice  %s  imsi=%s  slice %s → %s",
             description, imsi, current_slice_id, target,
         )
-        try:
-            sm_req_id = await self.call_sm(
-                self.sm_client.change_slice(imsi, payload), "SM change_slice"
-            )
-        except HTTPException as exc:
-            self.operation_repo.update_status(
-                operation_id=operation_id, status="failed", subscription_id=session_id,
-                sm_slice_id=target, previous_sm_slice_id=current_slice_id,
-                error=str(exc.detail),
-            )
-            raise
-
-        self.track(
+        sm_request_id = await self._tracked_sm_call(
+            owner=owner,
+            operation_id=operation_id,
+            slice_id=target,
+            call=self.sm_client.change_slice(
+                imsi, self.build_change_payload(target, resolved.sm_snssai, resolved.dnn)
+            ),
+            description="SM change_slice",
+            session_id=session_id,
+            previous_slice_id=current_slice_id,
+        )
+        self._track(
             operation_id=operation_id,
             session_id=session_id,
             slice_id=target,
-            sm_request_id=sm_req_id,
+            sm_request_id=sm_request_id,
             previous_slice_id=current_slice_id,
         )
         return target
@@ -405,10 +388,88 @@ class SessionCore:
             session_id, slice_id, imsi,
         )
         try:
-            sm_req_id = await self.call_sm(
+            sm_request_id = await self._call_sm(
                 self.sm_client.dissociate_slice(imsi, slice_id), "SM dissociate_slice"
             )
-        except HTTPException as exc:
-            logger.warning("SM dissociate_slice failed (continuing): %s", exc.detail)
+        except (SmUnavailable, SmFailed) as exc:
+            logger.warning("SM dissociate_slice failed (continuing): %s", exc)
             return
-        self.poll_untracked(sm_req_id)
+        # No local operation record: the dissociate is polled for logging only.
+        if settings.sm_polling_enabled and sm_request_id:
+            asyncio.create_task(
+                poll_sm_request(sm_request_id=sm_request_id, operation_id=""),
+                name=f"poll-{sm_request_id[:8]}",
+            )
+
+    # ================================================================== #
+    #  SM calls and operation tracking                                    #
+    # ================================================================== #
+
+    @staticmethod
+    async def _call_sm(call: Awaitable[str], description: str) -> str:
+        """Await an SM call and return its ``request_id``.
+
+        Raises:
+            SmUnavailable: the circuit breaker is open.
+            SmFailed: any other failure.
+        """
+        try:
+            return await call
+        except CircuitBreakerOpen as exc:
+            raise SmUnavailable(str(exc)) from exc
+        except Exception as exc:
+            raise SmFailed(f"{description} failed: {exc}") from exc
+
+    async def _tracked_sm_call(
+        self,
+        *,
+        owner: str,
+        operation_id: str,
+        slice_id: str,
+        call: Awaitable[str],
+        description: str,
+        session_id: Optional[str] = None,
+        previous_slice_id: Optional[str] = None,
+    ) -> str:
+        """Record an operation (pending), make the SM call, and mark the
+        operation failed if the call fails."""
+        self.operation_repo.create(operation_id=operation_id, scs_as_id=owner, status="pending")
+        try:
+            return await self._call_sm(call, description)
+        except (SmUnavailable, SmFailed) as exc:
+            self.operation_repo.update_status(
+                operation_id=operation_id, status="failed", subscription_id=session_id,
+                sm_slice_id=slice_id, previous_sm_slice_id=previous_slice_id, error=str(exc),
+            )
+            raise
+
+    def _track(
+        self,
+        *,
+        operation_id: str,
+        session_id: str,
+        slice_id: str,
+        sm_request_id: str,
+        previous_slice_id: Optional[str] = None,
+    ) -> None:
+        """Mark an accepted operation provisioning (and poll the SM) or completed.
+
+        ``previous_slice_id`` marks a QoS change: if the SM reports it failed,
+        the poller puts the session back on that slice.
+        """
+        polling = settings.sm_polling_enabled and bool(sm_request_id)
+        self.operation_repo.update_status(
+            operation_id=operation_id,
+            # Polling disabled (an older SM without /operations): the SM's 202
+            # is the terminal result we can observe.
+            status="sm_provisioning" if polling else "completed",
+            subscription_id=session_id,
+            sm_slice_id=slice_id,
+            sm_request_id=sm_request_id or None,
+            previous_sm_slice_id=previous_slice_id,
+        )
+        if polling:
+            asyncio.create_task(
+                poll_sm_request(sm_request_id=sm_request_id, operation_id=operation_id),
+                name=f"poll-{operation_id[:8]}",
+            )
