@@ -61,9 +61,9 @@ def resolve_imsi(
         if imsi:
             return imsi
 
-    tried = ", ".join(filter(None, [ue_ipv4, ue_ipv6]))
+    # The message leaves the address out: it is returned to the client and
+    # logged with the rejection, and a UE address is personal data.
     raise ValueError(
-        f"Could not resolve IMSI for UE address(es): {tried}. "
-        f"Not found in the subscriber map. "
-        f"Register this UE in subscriber_map.py or the UDM."
+        "Could not resolve the IMSI of the UE: its address is not in the "
+        "subscriber map. Register this UE in subscriber_map.py or the UDM."
     )

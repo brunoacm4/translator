@@ -54,6 +54,25 @@ curl -s http://10.16.255.53:8081/health | python3 -m json.tool
 # expect: "status":"healthy", "sm_reachable":true, "circuit_breaker":{"state":"closed"}
 ```
 
+## Capture the NEF's N5 requests (first tests)
+
+The translator does not log request bodies; it logs only the reason of each rejected request
+([`CONSIDERATIONS.md`](../CONSIDERATIONS.md) §4.14). To see exactly what the NEF sends during
+the first tests, capture the traffic on the translator VM. The capture also shows the NEF's
+HTTP/2 mode and the termination requests sent to the NEF's southbound gateway (port 8500).
+
+```bash
+# On the translator VM, started before the NEF opens its connection; Ctrl+C after the test
+sudo tcpdump -i any -s 0 -w n5-capture.pcap 'tcp port 8081 or tcp port 8500'
+```
+
+Copy the file to a workstation and open it in Wireshark. If the requests show as plain TCP,
+use *Analyze → Decode As…* with TCP port 8081 → HTTP2. The JSON bodies are in the DATA
+frames. Not tried yet: whether `tcpdump` and `sudo` are available on the VM, and whether
+Wireshark needs the capture to start before the connection to decode the headers.
+
+The capture holds UE addresses and possibly SUPIs: delete it after the analysis.
+
 ## Deploy the Slice Manager sandbox (VM 10.16.255.55)
 
 The SM lives in the read-only `slice-manager-sandbox` repo. It is a **no-op build**: it runs

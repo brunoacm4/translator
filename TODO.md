@@ -16,7 +16,9 @@ the slice its `qosReference` selects, moves it on a QoS change and dissociates i
 - One session per UE across both APIs (`403`).
 - QoS changes are tracked to completion, notified, and reverted on failure.
 - The slice map holds placeholders until the SM team sends its list.
-- 85 unit + integration tests green (2026-11-21, with ADR 0007).
+- 90 unit + integration tests green (2026-11-27, with rejection logging).
+- Each answer to the NEF fits its 25 s limit: one SM attempt of 15 s (CONSIDERATIONS §4.6).
+- Rejected requests are logged with their reason, never with their body (CONSIDERATIONS §4.14).
 
 **November 2026 - N5 interface added.** The NEF installed on NEF-Dev on 2026-11-12 calls a
 statically configured PCF over N5 (TS 29.514) with HTTP/2 cleartext, against an Open5GS 2.8.0
@@ -48,7 +50,7 @@ patch / delete all pass at the HTTP level; DELETE returns `204` (idempotent on S
 1. **Prerequisites** - Python 3.11; access to the testbed VPN; the `nef-translator-dev-0` and
    `sandbox` Docker contexts configured (`docker context ls`).
 2. **Set up & run the tests** - follow [`README.md`](README.md) "Quick start";
-   `python -m pytest -q` → 85 passing.
+   `python -m pytest -q` → 90 passing.
 3. **Bring up the SM sandbox** - [`infra/README.md`](infra/README.md) "Deploy the Slice
    Manager sandbox" (remember the empty `.env` gotcha, and that it predates the current SM).
 4. **Deploy the translator to its VM** - [`infra/README.md`](infra/README.md) "Deploy the
@@ -68,7 +70,9 @@ patch / delete all pass at the HTTP level; DELETE returns `204` (idempotent on S
   address of the southbound gateway (seen 2026-11-21: `sgw` LoadBalancer on 10.255.13.14:8500,
   configured as `sgw.onemnef.com:8500`; the compose maps that name to 10.255.13.14 since
   2026-11-27, but that the translator VM reaches it is not checked yet), and how the NEF reacts
-  to the termination request (ADR 0007).
+  to the termination request (ADR 0007). During the first tests, capture the traffic on the
+  translator VM to see the request bodies ([`infra/README.md`](infra/README.md), "Capture the
+  NEF's N5 requests").
 - **Revisit ADR 0007 options 1-3** (deferred) once real NEF requests are seen. In each case
   Open5GS is more lenient than the translator:
   - no `qosReference`: Open5GS uses a default per media type;

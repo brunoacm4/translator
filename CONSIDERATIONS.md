@@ -265,6 +265,14 @@ and the session is then forgotten. *(`app/impl/notifier.py`.)*
 - **Errors** are 3GPP `ProblemDetails` (`application/problem+json`). Request validation
   failures are `400` with `invalidParams`; the 3GPP API defines no `422`.
   *(`app/apis/problem_details.py`.)*
+- **Rejections are logged** (decided by Bruno on 2026-11-27). Every `4xx` on either API
+  produces one `WARNING` line with the method, the path, the status and the reason: the error
+  detail, or the invalid parameter names and messages. It includes requests to unknown paths.
+  - **Never logged**: the request body, because it holds personal data such as the UE address
+    or SUPI. For the same reason, the unknown-UE error no longer quotes the UE address.
+  - **To see the bodies during the first NEF tests**: capture the traffic on the translator VM
+    instead ([`infra/README.md`](infra/README.md), "Capture the NEF's N5 requests"). Logging
+    bodies was judged a temporary need, so no code does it.
 - **PATCH** applies an RFC 7396 JSON merge patch: a member set to `null` is removed. A patch
   that leaves the subscription invalid (e.g. removing `notificationDestination`) is rejected
   with `400`. *(`app/utils/merge_patch.py`.)*
