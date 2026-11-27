@@ -101,7 +101,7 @@ Taken by Bruno on 2026-11-21.
 
 ## Consequences
 
-Implemented on `develop` on 2026-11-21 (`app/impl/policy_authorization_service.py` `build_termination_request`, `app/impl/notifier.py`).
+Implemented on `develop` on 2026-11-21 (`app/impl/policy_authorization_service.py` `build_termination_request`, `app/impl/notifier.py`). On 2026-11-27 `build_termination_request` and `N5_OWNER` moved to `app/impl/notifier.py`, which removed a circular import.
 
 - **When the SM reports that an N5 create failed**:
   - The translator POSTs a `TerminationInfo` to `{ascReqData.notifUri}/terminate`, which is the route the NEF's southbound gateway serves.

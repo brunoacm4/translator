@@ -14,8 +14,8 @@
 
     plus, like the Open5GS PCF (docs/adr/0007), one notification only: the
     termination request ``TerminationInfo`` to ``{ascReqData.notifUri}/terminate``
-    when the SM reports that a create failed. The session is then forgotten.
-    No ``EventsNotification`` is sent.
+    when the SM reports that a create failed, sent by ``app.impl.notifier``.
+    The session is then forgotten. No ``EventsNotification`` is sent.
 
     Status codes follow the Open5GS 2.8.0 PCF the NEF is built against:
     unknown UE → 404; missing, unknown or conflicting ``qosReference``, or a
@@ -24,8 +24,9 @@
     operation lists no 409 (docs/adr/0006).
 
     Sessions share the subscriptions table with TS 29.122, under the reserved
-    owner ``N5_OWNER``. The stored data is ``{"context": <AppSessionContext as
-    received>, "resourceUri": <absolute URI of the session>}``.
+    owner ``N5_OWNER`` (defined in ``app.impl.notifier``). The stored data is
+    ``{"context": <AppSessionContext as received>, "resourceUri": <absolute
+    URI of the session>}``.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.config.subscriber_map import resolve_imsi
+from app.impl.notifier import N5_OWNER
 from app.impl.session_core import (
     QosIntent,
     SessionCore,
@@ -49,45 +51,11 @@ from app.models.pcf.app_session import (
     AppSessionContext,
     AppSessionContextReqData,
     AppSessionContextUpdateDataPatch,
-    TerminationInfo,
 )
 from app.store.subscription_store import store
 from app.utils.merge_patch import apply_merge_patch
 
 logger = logging.getLogger(__name__)
-
-# Owner of N5 sessions in the subscriptions table. '#' cannot reach a
-# TS 29.122 scsAsId unescaped, so it cannot collide with an AF's subscriptions.
-N5_OWNER = "#npcf-policyauthorization"
-
-# Cause sent when the SM could not set up a new session (docs/adr/0007).
-# Chosen from the TS 29.514 V17.6.0 OpenAPI enum by name; the spec text that
-# defines each cause has not been read.
-TERMINATION_CAUSE_FAILED_CREATE = "INSUFFICIENT_QOS_FLOW_RESOURCES"
-
-
-def build_termination_request(
-    stored: Dict[str, Any],
-) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    """
-    Build the termination request of a stored session (docs/adr/0007).
-
-    Sent to ``{ascReqData.notifUri}/terminate``, the route the Open5GS PCF
-    uses and the NEF's southbound gateway serves. The Open5GS PCF sends no
-    body; this sends the spec's ``TerminationInfo``, which the NEF's route
-    (a JSON object is required) also accepts.
-
-    Returns ``(url, payload)``, or ``(None, None)`` without ``notifUri``.
-    """
-    req = (stored.get("context") or {}).get("ascReqData") or {}
-    if not req.get("notifUri"):
-        return None, None
-    info = TerminationInfo(
-        termCause=TERMINATION_CAUSE_FAILED_CREATE,
-        resUri=stored["resourceUri"],
-    )
-    url = f"{req['notifUri'].rstrip('/')}/terminate"
-    return url, info.model_dump(mode="json", exclude_none=True)
 
 
 class PolicyAuthorizationService:

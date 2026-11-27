@@ -86,7 +86,7 @@ def test_operation_outcome_is_posted_to_the_notification_destination(sqlite_db, 
 
 
 def _n5_session_with_operation(previous_slice=None):
-    from app.impl.policy_authorization_service import N5_OWNER
+    from app.impl.notifier import N5_OWNER
 
     init_db()
     resource_uri = "http://translator/npcf-policyauthorization/v1/app-sessions/as-1"

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.impl.policy_authorization_service import (
-    PolicyAuthorizationService,
-    build_termination_request,
-)
+from app.impl.notifier import build_termination_request
+from app.impl.policy_authorization_service import PolicyAuthorizationService
 from app.models.pcf.app_session import AppSessionContextReqData
 
 RESOURCE_URI = "http://translator:8081/npcf-policyauthorization/v1/app-sessions/abc"
